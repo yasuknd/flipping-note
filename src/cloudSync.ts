@@ -198,6 +198,65 @@ async function uploadLocalDataSdk(uid: string): Promise<void> {
   await batch.commit()
 }
 
+async function restListItemIds(uid: string, token: string): Promise<Set<string>> {
+  const projectId = getFirebaseProjectId()
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${projectId}` +
+    `/databases/(default)/documents/users/${uid}/items?pageSize=300`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 404) return new Set()
+  if (!res.ok) return new Set()
+  const data = (await res.json()) as { documents?: { name?: string }[] }
+  const ids = new Set<string>()
+  for (const doc of data.documents ?? []) {
+    const name = doc.name ?? ''
+    const id = name.split('/').pop()
+    if (id) ids.add(id)
+  }
+  return ids
+}
+
+/**
+ * 端末に商品があるのにクラウドが空／不足している場合にアップロードする。
+ * （空端末で初期化して itemCount:0 になったケースの復旧用）
+ */
+export async function reconcileLocalItemsToCloud(uid: string): Promise<number> {
+  const localItems = loadItems()
+  if (localItems.length === 0) return 0
+
+  const token = await ensureAuthToken()
+  const cloudIds = await restListItemIds(uid, token)
+  const toUpload =
+    cloudIds.size === 0
+      ? localItems
+      : localItems.filter((item) => !cloudIds.has(item.id))
+
+  if (toUpload.length === 0) return 0
+
+  for (const item of toUpload) {
+    await restUpsertDocument(`users/${uid}/items/${item.id}`, { ...item }, token)
+  }
+
+  const nextCount = cloudIds.size === 0 ? localItems.length : cloudIds.size + toUpload.length
+  await restUpsertDocument(
+    `users/${uid}/meta/sync`,
+    {
+      initializedAt: new Date().toISOString(),
+      itemCount: nextCount,
+      reconciledAt: new Date().toISOString(),
+    },
+    token,
+  )
+
+  // 設定も端末側に実データがあれば上書き同期（デフォルトだけがクラウドにあるケース）
+  const localSettings = loadSettings()
+  await restUpsertDocument(`users/${uid}/settings/app`, { ...localSettings }, token)
+
+  return toUpload.length
+}
+
 /** クラウド未初期化なら端末の localStorage をアップロードする */
 export async function ensureCloudInitialized(uid: string): Promise<void> {
   try {
@@ -206,27 +265,29 @@ export async function ensureCloudInitialized(uid: string): Promise<void> {
     await enableNetwork(db)
     await sleep(200)
 
-    let exists: boolean | null = null
+    let exists = false
     try {
       exists = await waitForMetaExists(uid)
     } catch {
-      // SDK 経路が offline なら REST に切り替え
       exists = await restGetMetaExists(uid, token)
       if (!exists) {
         await uploadLocalDataRest(uid, token)
+        await reconcileLocalItemsToCloud(uid)
         return
       }
-      return
     }
 
-    if (exists) return
-
-    try {
-      await uploadLocalDataSdk(uid)
-    } catch {
-      const freshToken = await ensureAuthToken()
-      await uploadLocalDataRest(uid, freshToken)
+    if (!exists) {
+      try {
+        await uploadLocalDataSdk(uid)
+      } catch {
+        const freshToken = await ensureAuthToken()
+        await uploadLocalDataRest(uid, freshToken)
+      }
     }
+
+    // meta があっても商品が未アップロードならここで救出
+    await reconcileLocalItemsToCloud(uid)
   } catch (err) {
     throw formatSyncError(err)
   }
@@ -282,6 +343,19 @@ export function subscribeItems(
       const items = snap.docs
         .map((d) => normalizeItem({ ...(d.data() as Partial<Item>), id: d.id }))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+
+      // クラウド空・端末にデータあり → 上書きせずアップロードして端末表示を維持
+      if (items.length === 0) {
+        const local = loadItems()
+        if (local.length > 0) {
+          void reconcileLocalItemsToCloud(uid).catch(() => {
+            /* 次回再同期で再試行 */
+          })
+          onChange(local)
+          return
+        }
+      }
+
       saveItems(items)
       onChange(items)
     },
