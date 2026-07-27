@@ -19,6 +19,7 @@ import {
 } from 'react'
 import { ensureCloudInitialized } from './cloudSync'
 import { getFirebaseAuth, isFirebaseConfigured } from './firebase'
+import { clearLocalData } from './storage'
 
 const REDIRECT_FLAG_KEY = 'fn-auth-redirect-pending'
 
@@ -197,7 +198,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (!configured) return
-    const { clearLocalData } = await import('./storage')
     clearLocalData()
     await firebaseSignOut(getFirebaseAuth())
   }, [configured])
