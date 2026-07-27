@@ -84,6 +84,7 @@ export function ProfitsPage() {
         item.feeRatePercent,
         item.saleShipping,
         item.feeDiscountPercent,
+        item.couponAmount,
       )
       const prev = map.get(key) ?? {
         settled: 0,

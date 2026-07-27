@@ -75,22 +75,27 @@ export function calcFee(
 }
 
 /**
- * 売上金 = 販売価格 - 販売手数料 - 販売送料
- * 手元に残る販売側の入金額（仕入原価・クーポン控除前）
+ * 売上金 = 販売価格 - 販売手数料 - 販売送料 + クーポン
+ * クーポンは手数料対象外で、売上金・利益の両方に加算する
  */
 export function calcPayout(
   salePrice: number,
   feeRatePercent: number,
   saleShipping: number,
   feeDiscountPercent = 0,
+  couponAmount = 0,
 ): number {
   return (
-    salePrice - calcFee(salePrice, feeRatePercent, feeDiscountPercent) - saleShipping
+    salePrice -
+    calcFee(salePrice, feeRatePercent, feeDiscountPercent) -
+    saleShipping +
+    couponAmount
   )
 }
 
 /**
- * 利益 = 販売価格 - 手数料 - 販売送料 - 実質仕入価格 + クーポン
+ * 利益 = 売上金 - 実質仕入価格
+ * （= 販売価格 - 手数料 - 販売送料 + クーポン - 実質仕入価格）
  */
 export function calcProfit(
   salePrice: number,
@@ -101,11 +106,13 @@ export function calcProfit(
   couponAmount = 0,
 ): number {
   return (
-    salePrice -
-    calcFee(salePrice, feeRatePercent, feeDiscountPercent) -
-    saleShipping -
-    effectiveCost +
-    couponAmount
+    calcPayout(
+      salePrice,
+      feeRatePercent,
+      saleShipping,
+      feeDiscountPercent,
+      couponAmount,
+    ) - effectiveCost
   )
 }
 

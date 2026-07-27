@@ -425,6 +425,7 @@ export function ListPage() {
               item.feeRatePercent,
               item.saleShipping,
               item.feeDiscountPercent,
+              item.couponAmount,
             )
           : null
 
@@ -567,6 +568,7 @@ export function ListPage() {
                     item.feeRatePercent,
                     item.saleShipping,
                     item.feeDiscountPercent,
+                    item.couponAmount,
                   )
                 : null
             const metaLine = [item.brand, item.color, item.size, item.modelNumber]

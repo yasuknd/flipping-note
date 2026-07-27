@@ -550,7 +550,7 @@ export function ItemFormPage() {
                 placeholder="0"
               />
             </Field>
-            <Field label="クーポン（円）" hint="利益に上乗せして再計算">
+            <Field label="クーポン（円）" hint="手数料なし。売上金と利益に加算">
               <MoneyInput
                 id="couponAmount"
                 value={numToRaw(form.couponAmount)}
