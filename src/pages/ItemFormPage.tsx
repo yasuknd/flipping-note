@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   calcBreakEvenPrice,
   calcEffectiveCost,
@@ -88,12 +88,18 @@ export function ItemFormPage() {
   const { id } = useParams()
   const isNew = !id || id === 'new'
   const navigate = useNavigate()
+  const location = useLocation()
+  const duplicate =
+    isNew && location.state && typeof location.state === 'object' && 'duplicate' in location.state
+      ? (location.state as { duplicate?: ItemInput }).duplicate
+      : undefined
   const { items, save, remove } = useItems()
   const { settings } = useSettings()
   const existing = !isNew ? items.find((item) => item.id === id) : undefined
 
   const [form, setForm] = useState<ItemInput>(() => {
     if (existing) return toFormState(existing)
+    if (duplicate) return { ...duplicate }
     return {
       ...EMPTY_ITEM_INPUT,
       purchaseDate: todayISO(),
@@ -102,7 +108,11 @@ export function ItemFormPage() {
     }
   })
   const [salePriceText, setSalePriceText] = useState(
-    existing?.salePrice != null ? String(existing.salePrice) : '',
+    existing?.salePrice != null
+      ? String(existing.salePrice)
+      : duplicate?.salePrice != null
+        ? String(duplicate.salePrice)
+        : '',
   )
   const [message, setMessage] = useState('')
 
@@ -139,6 +149,12 @@ export function ItemFormPage() {
       setSalePriceText(existing.salePrice != null ? String(existing.salePrice) : '')
       return
     }
+    if (duplicate) {
+      setForm({ ...duplicate })
+      setSalePriceText(duplicate.salePrice != null ? String(duplicate.salePrice) : '')
+      setMessage('')
+      return
+    }
     setForm({
       ...EMPTY_ITEM_INPUT,
       purchaseDate: todayISO(),
@@ -149,7 +165,24 @@ export function ItemFormPage() {
     setMessage('')
     // settings は新規オープン時の初期値にだけ使う
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [existing, isNew, navigate, id])
+  }, [existing, isNew, navigate, id, duplicate])
+
+  function updateSoldDate(soldDate: string) {
+    setForm((prev) => {
+      if (soldDate) {
+        return {
+          ...prev,
+          soldDate,
+          status: prev.status === 'completed' ? 'completed' : 'sold',
+        }
+      }
+      return {
+        ...prev,
+        soldDate: '',
+        status: 'listed',
+      }
+    })
+  }
 
   const effectiveCost = useMemo(
     () => calcEffectiveCost(form.purchasePrice, form.discount, form.purchaseShipping),
@@ -449,11 +482,11 @@ export function ItemFormPage() {
               ))}
             </select>
           </Field>
-          <Field label="売却日" hint="取引中・取引完了の集計に使用">
+          <Field label="売却日" hint="入力で取引中、削除で出品中に自動変更">
             <input
               type="date"
               value={form.soldDate}
-              onChange={(e) => update('soldDate', e.target.value)}
+              onChange={(e) => updateSoldDate(e.target.value)}
             />
           </Field>
         </Section>

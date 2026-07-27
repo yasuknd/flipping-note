@@ -10,8 +10,7 @@ import {
 import {
   getFirestore,
   initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
+  memoryLocalCache,
   type Firestore,
 } from 'firebase/firestore'
 
@@ -72,12 +71,10 @@ export function getFirebaseAuth(): Auth {
 
 export function getFirebaseDb(): Firestore {
   if (!db) {
+    // persistentLocalCache は Safari/iOS で誤って offline 扱いになることがある。
+    // 端末キャッシュは localStorage 側で持つので、Firestore はメモリのみにする。
     try {
-      db = initializeFirestore(getApp(), {
-        localCache: persistentLocalCache({
-          tabManager: persistentMultipleTabManager(),
-        }),
-      })
+      db = initializeFirestore(getApp(), { localCache: memoryLocalCache() })
     } catch {
       db = getFirestore(getApp())
     }

@@ -2,7 +2,8 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
+  enableNetwork,
+  getDocFromServer,
   onSnapshot,
   setDoc,
   writeBatch,
@@ -28,22 +29,46 @@ function syncMetaDoc(uid: string) {
   return doc(getFirebaseDb(), 'users', uid, 'meta', 'sync')
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function readSyncMeta(uid: string) {
+  const db = getFirebaseDb()
+  await enableNetwork(db)
+  const metaRef = syncMetaDoc(uid)
+
+  let lastError: unknown
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await getDocFromServer(metaRef)
+    } catch (err) {
+      lastError = err
+      await enableNetwork(db)
+      await sleep(300 * (attempt + 1))
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('クラウドへの接続に失敗しました')
+}
+
 /** クラウド未初期化なら端末の localStorage をアップロードする */
 export async function ensureCloudInitialized(uid: string): Promise<void> {
-  const metaRef = syncMetaDoc(uid)
-  const meta = await getDoc(metaRef)
+  const meta = await readSyncMeta(uid)
   if (meta.exists()) return
 
   const localItems = loadItems()
   const localSettings = loadSettings()
   const db = getFirebaseDb()
+  await enableNetwork(db)
   const batch = writeBatch(db)
 
   for (const item of localItems) {
     batch.set(itemDoc(uid, item.id), item)
   }
   batch.set(settingsDoc(uid), localSettings)
-  batch.set(metaRef, {
+  batch.set(syncMetaDoc(uid), {
     initializedAt: new Date().toISOString(),
     itemCount: localItems.length,
   })

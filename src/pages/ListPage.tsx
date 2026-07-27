@@ -97,6 +97,11 @@ function toItemInput(
   }
 }
 
+/** 一覧カードからの複製用（新規登録フォームへ渡す） */
+function toDuplicateInput(item: Item): ItemInput {
+  return toItemInput(item)
+}
+
 function formatListDate(value: string): string {
   if (!value) return '---'
   return value.replace(/-/g, '/')
@@ -354,7 +359,23 @@ export function ListPage() {
   }
 
   function handleSoldDateChange(item: Item, soldDate: string) {
-    void save(item.id, toItemInput(item, { soldDate }))
+    if (soldDate) {
+      void save(
+        item.id,
+        toItemInput(item, {
+          soldDate,
+          status: item.status === 'completed' ? 'completed' : 'sold',
+        }),
+      )
+      return
+    }
+    void save(
+      item.id,
+      toItemInput(item, {
+        soldDate: '',
+        status: 'listed',
+      }),
+    )
   }
 
   function handleMemoChange(item: Item, memo: string) {
@@ -524,9 +545,18 @@ export function ListPage() {
                           status={item.status}
                           onChange={(status) => handleStatusChange(item, status)}
                         />
-                        <Link to={`/items/${item.id}`} className="item-edit-link">
-                          編集
-                        </Link>
+                        <div className="item-card-actions">
+                          <Link to={`/items/${item.id}`} className="item-edit-link">
+                            編集
+                          </Link>
+                          <Link
+                            to="/items/new"
+                            state={{ duplicate: toDuplicateInput(item) }}
+                            className="item-edit-link"
+                          >
+                            複製
+                          </Link>
+                        </div>
                       </div>
 
                       <div className="item-tag-row">
