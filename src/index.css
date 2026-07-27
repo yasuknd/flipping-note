@@ -968,6 +968,25 @@ select {
   font-weight: 700;
 }
 
+.auth-gate {
+  max-width: 26rem;
+  margin: 48px auto 0;
+  text-align: center;
+}
+
+.auth-gate h1 {
+  font-family: var(--font-display);
+  margin-bottom: 12px;
+}
+
+.auth-gate .btn {
+  margin-top: 18px;
+}
+
+.sync-banner {
+  margin: 0 0 12px;
+}
+
 /* ---------- empty ---------- */
 .empty {
   margin-top: 32px;

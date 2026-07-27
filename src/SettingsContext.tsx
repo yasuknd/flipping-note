@@ -4,13 +4,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
 import { useAuth } from './AuthContext'
-import { pullSettingsFromCloud, saveSettingsCloud, subscribeSettings } from './cloudSync'
-import type { AppSettings, MarketplacePreset } from './types'
-import { createMarketplaceId, loadSettings, saveSettings } from './storage'
+import { fetchSettings, saveSettingsCloud, subscribeSettings } from './cloudSync'
+import { DEFAULT_SETTINGS, type AppSettings, type MarketplacePreset } from './types'
+import { createMarketplaceId } from './storage'
 
 interface SettingsContextValue {
   settings: AppSettings
@@ -24,66 +25,83 @@ const SettingsContext = createContext<SettingsContextValue | null>(null)
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const { user, syncReady } = useAuth()
-  const [settings, setSettings] = useState<AppSettings>(() => loadSettings())
+  const [settings, setSettings] = useState<AppSettings>(() =>
+    structuredClone(DEFAULT_SETTINGS),
+  )
+  const pendingWrites = useRef(0)
 
   useEffect(() => {
-    if (!syncReady) return
-
-    if (!user) {
-      setSettings(loadSettings())
+    if (!syncReady || !user) {
+      setSettings(structuredClone(DEFAULT_SETTINGS))
       return
     }
 
     let cancelled = false
 
-    const applyCloud = async () => {
-      try {
-        const next = await pullSettingsFromCloud(user.uid)
-        if (!cancelled && next) setSettings(next)
-      } catch {
+    void fetchSettings(user.uid)
+      .then((next) => {
+        if (cancelled || pendingWrites.current > 0) return
+        setSettings(next)
+      })
+      .catch(() => {
         /* ignore */
-      }
-    }
+      })
 
     const unsub = subscribeSettings(user.uid, (next) => {
-      if (!cancelled) setSettings(next)
+      if (cancelled || pendingWrites.current > 0) return
+      setSettings(next)
     })
 
-    void applyCloud()
-
     const onForeground = () => {
-      if (document.visibilityState === 'visible') void applyCloud()
+      if (document.visibilityState !== 'visible') return
+      if (pendingWrites.current > 0) return
+      void fetchSettings(user.uid)
+        .then((next) => {
+          if (cancelled || pendingWrites.current > 0) return
+          setSettings(next)
+        })
+        .catch(() => {
+          /* ignore */
+        })
     }
     window.addEventListener('focus', onForeground)
     document.addEventListener('visibilitychange', onForeground)
-    const timer = window.setInterval(() => void applyCloud(), 20000)
 
     return () => {
       cancelled = true
       unsub()
       window.removeEventListener('focus', onForeground)
       document.removeEventListener('visibilitychange', onForeground)
-      window.clearInterval(timer)
     }
   }, [user, syncReady])
 
   const commit = useCallback(
-    (updater: (prev: AppSettings) => AppSettings) => {
+    async (updater: (prev: AppSettings) => AppSettings) => {
+      if (!user) return
+
+      let next!: AppSettings
       setSettings((prev) => {
-        const next = updater(prev)
-        saveSettings(next)
-        if (user) {
-          void saveSettingsCloud(user.uid, next)
-        }
+        next = updater(prev)
         return next
       })
+
+      pendingWrites.current += 1
+      try {
+        await saveSettingsCloud(user.uid, next)
+      } catch (err) {
+        const latest = await fetchSettings(user.uid)
+        setSettings(latest)
+        throw err
+      } finally {
+        pendingWrites.current = Math.max(0, pendingWrites.current - 1)
+      }
     },
     [user],
   )
 
   const setMinProfit = useCallback(
     (value: number) => {
-      commit((prev) => ({ ...prev, minProfit: Math.max(0, value) }))
+      void commit((prev) => ({ ...prev, minProfit: Math.max(0, value) }))
     },
     [commit],
   )
@@ -97,7 +115,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         name: trimmed,
         feeRatePercent,
       }
-      commit((prev) => ({ ...prev, marketplaces: [...prev.marketplaces, next] }))
+      void commit((prev) => ({ ...prev, marketplaces: [...prev.marketplaces, next] }))
     },
     [commit],
   )
@@ -106,7 +124,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     (id: string, name: string, feeRatePercent: number) => {
       const trimmed = name.trim()
       if (!trimmed) return
-      commit((prev) => ({
+      void commit((prev) => ({
         ...prev,
         marketplaces: prev.marketplaces.map((m) =>
           m.id === id ? { ...m, name: trimmed, feeRatePercent } : m,
@@ -118,7 +136,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const removeMarketplace = useCallback(
     (id: string) => {
-      commit((prev) => ({
+      void commit((prev) => ({
         ...prev,
         marketplaces: prev.marketplaces.filter((m) => m.id !== id),
       }))

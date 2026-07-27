@@ -35,7 +35,7 @@ npm run dev
 1. Safari で上記URLを開く
 2. 共有 → **ホーム画面に追加**
 
-未ログイン時は端末の `localStorage` に保存されます。Google ログイン後は Firestore に同期され、PC／スマホで同じデータを使えます。
+未ログイン時は利用できません。Google ログイン後、データは Firestore にのみ保存され、PC／スマホで同期されます（端末の localStorage は使いません）。
 
 ## Google ログイン同期（Firebase）
 

@@ -13,15 +13,10 @@ export function SettingsPage() {
     removeMarketplace,
   } = useSettings()
   const {
-    configured,
-    ready,
     user,
     syncReady,
     syncError,
-    authError,
-    clearAuthError,
     retrySync,
-    signInWithGoogle,
     signOut,
   } = useAuth()
 
@@ -37,7 +32,7 @@ export function SettingsPage() {
     setMessage('')
     try {
       await retrySync()
-      setMessage('再同期を開始しました')
+      setMessage('再同期しました')
     } catch (err) {
       const text = err instanceof Error ? err.message : '再同期に失敗しました'
       setMessage(text)
@@ -46,27 +41,11 @@ export function SettingsPage() {
     }
   }
 
-  async function handleSignIn() {
-    setAuthBusy(true)
-    setMessage('')
-    clearAuthError()
-    try {
-      await signInWithGoogle()
-      setMessage('Googleアカウントでログインしました。PCとスマホで同期されます。')
-    } catch (err) {
-      const text = err instanceof Error ? err.message : 'ログインに失敗しました'
-      setMessage(text)
-    } finally {
-      setAuthBusy(false)
-    }
-  }
-
   async function handleSignOut() {
     setAuthBusy(true)
     setMessage('')
     try {
       await signOut()
-      setMessage('ログアウトしました。この端末のローカルデータは残ります。')
     } catch (err) {
       const text = err instanceof Error ? err.message : 'ログアウトに失敗しました'
       setMessage(text)
@@ -110,15 +89,8 @@ export function SettingsPage() {
         <p className="muted">推奨価格と販売先の初期値を決めます</p>
       </div>
 
-      <Section title="アカウント同期">
-        {!configured ? (
-          <p className="muted tight">
-            Firebase 未設定のため、この環境では端末内保存のみです。セットアップ後に Google
-            ログインで PC／スマホ同期が使えます。
-          </p>
-        ) : !ready ? (
-          <p className="muted tight">認証状態を確認中…</p>
-        ) : user ? (
+      <Section title="アカウント">
+        {user ? (
           <div className="account-panel">
             <div className="account-row">
               {user.photoURL ? (
@@ -135,11 +107,9 @@ export function SettingsPage() {
                 <p className="account-name">{user.displayName || 'Googleユーザー'}</p>
                 <p className="muted tight">{user.email}</p>
                 <p className="muted tight">
-                  {!syncReady
-                    ? 'クラウドと同期中…'
-                    : syncError
-                      ? `同期エラー: ${syncError}`
-                      : 'クラウド同期オン（この Google アカウント配下）'}
+                  {syncError
+                    ? `同期エラー: ${syncError}`
+                    : 'データはクラウドのみに保存されます（端末には残しません）'}
                 </p>
               </div>
             </div>
@@ -160,22 +130,7 @@ export function SettingsPage() {
               ログアウト
             </button>
           </div>
-        ) : (
-          <div className="account-panel">
-            <p className="muted tight">
-              Google でログインすると、商品・設定がクラウドに保存され、PCとスマホで同じデータを使えます。
-              初回ログイン時に、この端末の既存データがあればクラウドへ取り込みます。
-            </p>
-            <button
-              type="button"
-              className="btn btn-primary btn-block"
-              disabled={authBusy}
-              onClick={() => void handleSignIn()}
-            >
-              Googleでログイン
-            </button>
-          </div>
-        )}
+        ) : null}
       </Section>
 
       <Section title="最低限ほしい利益">
@@ -283,7 +238,6 @@ export function SettingsPage() {
         </form>
       </Section>
 
-      {authError ? <p className="form-message">{authError}</p> : null}
       {message ? <p className="form-message">{message}</p> : null}
     </div>
   )

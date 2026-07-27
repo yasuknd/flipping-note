@@ -197,6 +197,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (!configured) return
+    const { clearLocalData } = await import('./storage')
+    clearLocalData()
     await firebaseSignOut(getFirebaseAuth())
   }, [configured])
 

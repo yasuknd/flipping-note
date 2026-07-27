@@ -5,12 +5,11 @@ import {
   enableNetwork,
   onSnapshot,
   setDoc,
-  writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore'
 import { getFirebaseAuth, getFirebaseDb, getFirebaseProjectId } from './firebase'
-import { loadItems, loadSettings, saveItems, saveSettings } from './storage'
-import { normalizeItem, type AppSettings, type Item } from './types'
+import { clearLocalData, loadItems, loadSettings } from './storage'
+import { DEFAULT_SETTINGS, normalizeItem, type AppSettings, type Item } from './types'
 
 function itemsCol(uid: string) {
   return collection(getFirebaseDb(), 'users', uid, 'items')
@@ -22,10 +21,6 @@ function itemDoc(uid: string, id: string) {
 
 function settingsDoc(uid: string) {
   return doc(getFirebaseDb(), 'users', uid, 'settings', 'app')
-}
-
-function syncMetaDoc(uid: string) {
-  return doc(getFirebaseDb(), 'users', uid, 'meta', 'sync')
 }
 
 function sleep(ms: number): Promise<void> {
@@ -56,7 +51,7 @@ function formatSyncError(err: unknown): Error {
   }
   if (/offline/i.test(raw)) {
     return new Error(
-      'クラウドに接続できませんでした。Wi-Fi を確認し、設定の「再同期」を押すかページを再読み込みしてください。',
+      'クラウドに接続できませんでした。Wi-Fi を確認し、再読み込みしてください。',
     )
   }
   return err instanceof Error ? err : new Error(raw)
@@ -150,27 +145,6 @@ async function restDeleteDocument(docPath: string, token: string): Promise<void>
   }
 }
 
-async function restGetMetaExists(uid: string, token: string): Promise<boolean> {
-  const projectId = getFirebaseProjectId()
-  const url =
-    `https://firestore.googleapis.com/v1/projects/${projectId}` +
-    `/databases/(default)/documents/users/${uid}/meta/sync`
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (res.status === 404) return false
-  if (!res.ok) {
-    const body = await res.text()
-    if (/PERMISSION_DENIED|permission/i.test(body)) {
-      throw new Error(
-        'Firestore の権限エラーです。コンソールのルールを公開済みか確認してください。',
-      )
-    }
-    throw new Error(`クラウド接続エラー (${res.status})`)
-  }
-  return true
-}
-
 async function restListItems(uid: string, token: string): Promise<Item[]> {
   const projectId = getFirebaseProjectId()
   const url =
@@ -226,7 +200,7 @@ async function restGetSettings(uid: string, token: string): Promise<AppSettings 
     minProfit:
       typeof raw.minProfit === 'number' && Number.isFinite(raw.minProfit)
         ? raw.minProfit
-        : loadSettings().minProfit,
+        : DEFAULT_SETTINGS.minProfit,
     marketplaces: Array.isArray(raw.marketplaces)
       ? (raw.marketplaces as AppSettings['marketplaces']).filter(
           (m) =>
@@ -235,7 +209,7 @@ async function restGetSettings(uid: string, token: string): Promise<AppSettings 
             typeof m.name === 'string' &&
             typeof m.feeRatePercent === 'number',
         )
-      : loadSettings().marketplaces,
+      : structuredClone(DEFAULT_SETTINGS.marketplaces),
   }
 }
 
@@ -251,128 +225,53 @@ async function touchMeta(uid: string, token: string, itemCount: number): Promise
   )
 }
 
-async function uploadLocalDataRest(uid: string, token: string): Promise<void> {
-  const localItems = loadItems()
-  const localSettings = loadSettings()
-  for (const item of localItems) {
-    await restUpsertDocument(`users/${uid}/items/${item.id}`, { ...item }, token)
-  }
-  await restUpsertDocument(`users/${uid}/settings/app`, { ...localSettings }, token)
-  await touchMeta(uid, token, localItems.length)
-}
-
-function waitForMetaExists(uid: string, timeoutMs = 12000): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const finish = (fn: () => void) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      unsub()
-      fn()
-    }
-
-    const timer = setTimeout(() => {
-      finish(() => reject(new Error('offline')))
-    }, timeoutMs)
-
-    const unsub = onSnapshot(
-      syncMetaDoc(uid),
-      { includeMetadataChanges: true },
-      (snap) => {
-        if (snap.metadata.fromCache) return
-        finish(() => resolve(snap.exists()))
-      },
-      (err) => {
-        finish(() => reject(err))
-      },
-    )
-  })
-}
-
-async function uploadLocalDataSdk(uid: string): Promise<void> {
-  const localItems = loadItems()
-  const localSettings = loadSettings()
-  const db = getFirebaseDb()
-  await enableNetwork(db)
-  const batch = writeBatch(db)
-  for (const item of localItems) {
-    batch.set(itemDoc(uid, item.id), item)
-  }
-  batch.set(settingsDoc(uid), localSettings)
-  batch.set(syncMetaDoc(uid), {
-    initializedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    itemCount: localItems.length,
-  })
-  await batch.commit()
-}
-
 /**
- * クラウドが空で端末にデータがあるときだけ初期投入する。
- * ※ クラウドに1件でもある場合は投入しない（他端末の削除を戻さないため）
+ * 初回のみ: クラウドが空なら旧 localStorage を取り込んで破棄。
+ * 以降はクラウド専用。
  */
-async function seedCloudFromLocalIfEmpty(uid: string, token: string): Promise<void> {
-  const cloudItems = await restListItems(uid, token)
-  if (cloudItems.length > 0) return
-
-  const localItems = loadItems()
-  if (localItems.length === 0) {
-    if (!(await restGetMetaExists(uid, token))) {
-      await restUpsertDocument(`users/${uid}/settings/app`, { ...loadSettings() }, token)
-      await touchMeta(uid, token, 0)
-    }
-    return
-  }
-
-  await uploadLocalDataRest(uid, token)
-}
-
-/** クラウドから商品一覧を取得して localStorage にも反映 */
-export async function pullItemsFromCloud(uid: string): Promise<Item[]> {
-  const token = await ensureAuthToken()
-  const items = await restListItems(uid, token)
-  saveItems(items)
-  return items
-}
-
-/** クラウドから設定を取得して localStorage にも反映 */
-export async function pullSettingsFromCloud(uid: string): Promise<AppSettings | null> {
-  const token = await ensureAuthToken()
-  const settings = await restGetSettings(uid, token)
-  if (settings) saveSettings(settings)
-  return settings
-}
-
-/** ログイン後の初期化: meta 確認 → 空クラウドなら端末データを投入 */
 export async function ensureCloudInitialized(uid: string): Promise<void> {
   try {
     const token = await ensureAuthToken()
-    const db = getFirebaseDb()
-    await enableNetwork(db)
-    await sleep(200)
+    await enableNetwork(getFirebaseDb())
+    await sleep(150)
 
-    let exists = false
-    try {
-      exists = await waitForMetaExists(uid)
-    } catch {
-      exists = await restGetMetaExists(uid, token)
-    }
+    const cloudItems = await restListItems(uid, token)
+    let settings = await restGetSettings(uid, token)
 
-    if (!exists) {
-      try {
-        await uploadLocalDataSdk(uid)
-      } catch {
-        const freshToken = await ensureAuthToken()
-        await uploadLocalDataRest(uid, freshToken)
+    if (cloudItems.length === 0) {
+      const legacyItems = loadItems()
+      if (legacyItems.length > 0) {
+        for (const item of legacyItems) {
+          await restUpsertDocument(`users/${uid}/items/${item.id}`, { ...item }, token)
+        }
       }
     }
 
-    // 空クラウドへの救出（削除取り消しを起こさないよう「完全に空」のときだけ）
-    await seedCloudFromLocalIfEmpty(uid, await ensureAuthToken())
+    if (!settings) {
+      const legacySettings = loadSettings()
+      settings = legacySettings
+      await restUpsertDocument(`users/${uid}/settings/app`, { ...settings }, token)
+    }
+
+    const finalItems = await restListItems(uid, token)
+    await touchMeta(uid, token, finalItems.length)
+
+    // 端末ローカルは使わない
+    clearLocalData()
   } catch (err) {
     throw formatSyncError(err)
   }
+}
+
+export async function fetchItems(uid: string): Promise<Item[]> {
+  const token = await ensureAuthToken()
+  return restListItems(uid, token)
+}
+
+export async function fetchSettings(uid: string): Promise<AppSettings> {
+  const token = await ensureAuthToken()
+  const settings = await restGetSettings(uid, token)
+  return settings ?? structuredClone(DEFAULT_SETTINGS)
 }
 
 export async function upsertItemCloud(uid: string, item: Item): Promise<void> {
@@ -382,13 +281,6 @@ export async function upsertItemCloud(uid: string, item: Item): Promise<void> {
     const token = await ensureAuthToken()
     await restUpsertDocument(`users/${uid}/items/${item.id}`, { ...item }, token)
   }
-  try {
-    const token = await ensureAuthToken()
-    const items = await restListItems(uid, token)
-    await touchMeta(uid, token, items.length)
-  } catch {
-    /* meta 更新失敗は本体同期を止めない */
-  }
 }
 
 export async function deleteItemCloud(uid: string, id: string): Promise<void> {
@@ -397,13 +289,6 @@ export async function deleteItemCloud(uid: string, id: string): Promise<void> {
   } catch {
     const token = await ensureAuthToken()
     await restDeleteDocument(`users/${uid}/items/${id}`, token)
-  }
-  try {
-    const token = await ensureAuthToken()
-    const items = await restListItems(uid, token)
-    await touchMeta(uid, token, items.length)
-  } catch {
-    /* meta 更新失敗は本体同期を止めない */
   }
 }
 
@@ -424,13 +309,12 @@ export function subscribeItems(
   return onSnapshot(
     itemsCol(uid),
     (snap) => {
-      // 初回キャッシュの空振りだけ無視。サーバー結果（空含む）はクラウドを正とする
-      if (snap.metadata.fromCache && snap.empty) return
+      if (snap.metadata.hasPendingWrites) return
+      if (snap.metadata.fromCache) return
 
       const items = snap.docs
         .map((d) => normalizeItem({ ...(d.data() as Partial<Item>), id: d.id }))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      saveItems(items)
       onChange(items)
     },
     (error) => onError?.(formatSyncError(error)),
@@ -446,13 +330,15 @@ export function subscribeSettings(
     settingsDoc(uid),
     (snap) => {
       if (!snap.exists()) return
+      if (snap.metadata.hasPendingWrites) return
       if (snap.metadata.fromCache) return
+
       const data = snap.data() as Partial<AppSettings>
       const settings: AppSettings = {
         minProfit:
           typeof data.minProfit === 'number' && Number.isFinite(data.minProfit)
             ? data.minProfit
-            : loadSettings().minProfit,
+            : DEFAULT_SETTINGS.minProfit,
         marketplaces: Array.isArray(data.marketplaces)
           ? data.marketplaces.filter(
               (m): m is AppSettings['marketplaces'][number] =>
@@ -461,9 +347,8 @@ export function subscribeSettings(
                 typeof m.name === 'string' &&
                 typeof m.feeRatePercent === 'number',
             )
-          : loadSettings().marketplaces,
+          : structuredClone(DEFAULT_SETTINGS.marketplaces),
       }
-      saveSettings(settings)
       onChange(settings)
     },
     (error) => onError?.(formatSyncError(error)),

@@ -84,6 +84,12 @@ export function saveSettings(settings: AppSettings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
 }
 
+/** ログイン必須・クラウド専用化のため端末キャッシュを破棄 */
+export function clearLocalData(): void {
+  localStorage.removeItem(ITEMS_KEY)
+  localStorage.removeItem(SETTINGS_KEY)
+}
+
 export function createMarketplaceId(): string {
   return createId()
 }
