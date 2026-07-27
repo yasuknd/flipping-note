@@ -16,6 +16,9 @@ type Filter =
   | 'sold'
   | 'completed'
 
+type SortKey = 'purchaseDate' | 'soldDate'
+type SortOrder = 'desc' | 'asc'
+
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'all', label: 'すべて' },
   { key: 'considering', label: '出品検討中' },
@@ -24,6 +27,27 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: 'sold', label: '取引中' },
   { key: 'completed', label: '取引完了' },
 ]
+
+const SORT_KEYS: { key: SortKey; label: string }[] = [
+  { key: 'purchaseDate', label: '仕入日' },
+  { key: 'soldDate', label: '売却日' },
+]
+
+const SORT_ORDERS: { key: SortOrder; label: string }[] = [
+  { key: 'desc', label: '新しい順' },
+  { key: 'asc', label: '古い順' },
+]
+
+function compareByDate(a: string, b: string, order: SortOrder): number {
+  const aEmpty = !a
+  const bEmpty = !b
+  if (aEmpty && bEmpty) return 0
+  // 日付未設定は常に末尾
+  if (aEmpty) return 1
+  if (bEmpty) return -1
+  const cmp = a.localeCompare(b)
+  return order === 'asc' ? cmp : -cmp
+}
 
 function matchesFilter(status: ItemStatus, filter: Filter): boolean {
   switch (filter) {
@@ -304,11 +328,15 @@ function MemoCell({
 export function ListPage() {
   const { items, save } = useItems()
   const [filter, setFilter] = useState<Filter>('all')
+  const [sortKey, setSortKey] = useState<SortKey>('purchaseDate')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
 
-  const filtered = useMemo(
-    () => items.filter((item) => matchesFilter(item.status, filter)),
-    [items, filter],
-  )
+  const filtered = useMemo(() => {
+    const list = items.filter((item) => matchesFilter(item.status, filter))
+    return [...list].sort((a, b) =>
+      compareByDate(a[sortKey], b[sortKey], sortOrder),
+    )
+  }, [items, filter, sortKey, sortOrder])
 
   function handleStatusChange(item: Item, nextStatus: ItemStatus) {
     if (
@@ -426,6 +454,37 @@ export function ListPage() {
             {f.label}
           </button>
         ))}
+      </div>
+
+      <div className="sort-bar" aria-label="並び替え">
+        <label className="sort-field">
+          <span className="sort-label">並び替え</span>
+          <select
+            value={sortKey}
+            aria-label="並び替え項目"
+            onChange={(e) => setSortKey(e.target.value as SortKey)}
+          >
+            {SORT_KEYS.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="sort-field">
+          <span className="sort-label">順序</span>
+          <select
+            value={sortOrder}
+            aria-label="並び順"
+            onChange={(e) => setSortOrder(e.target.value as SortOrder)}
+          >
+            {SORT_ORDERS.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {filtered.length === 0 ? (

@@ -294,6 +294,36 @@ a {
   color: #f2fbf6;
 }
 
+.sort-bar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.sort-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sort-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  letter-spacing: 0.02em;
+}
+
+.sort-field select {
+  width: 100%;
+  padding: 8px 32px 8px 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border-radius: 12px;
+  background-color: var(--paper);
+}
+
 /* ---------- item list ---------- */
 .item-list {
   list-style: none;
