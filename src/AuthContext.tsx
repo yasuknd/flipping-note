@@ -1,5 +1,6 @@
 import {
   GoogleAuthProvider,
+  browserPopupRedirectResolver,
   getRedirectResult,
   onAuthStateChanged,
   signInWithPopup,
@@ -19,25 +20,43 @@ import {
 import { ensureCloudInitialized } from './cloudSync'
 import { getFirebaseAuth, isFirebaseConfigured } from './firebase'
 
+const REDIRECT_FLAG_KEY = 'fn-auth-redirect-pending'
+
 interface AuthContextValue {
   configured: boolean
   ready: boolean
   user: User | null
   syncReady: boolean
   syncError: string | null
+  authError: string | null
+  clearAuthError: () => void
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-function prefersRedirectSignIn(): boolean {
+function isMobileBrowser(): boolean {
   if (typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent
-  return (
-    /iPhone|iPad|iPod|Android/i.test(ua) ||
-    (/Safari/i.test(ua) && !/Chrome|CriOS|Edg/i.test(ua))
-  )
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+}
+
+function authErrorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return 'ログインに失敗しました'
+  const code = 'code' in err ? String((err as { code?: string }).code) : ''
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return 'ログインがキャンセルされました'
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'ポップアップがブロックされました。もう一度お試しください'
+  }
+  if (code === 'auth/unauthorized-domain') {
+    return 'このドメインは Firebase で許可されていません（yasuknd.github.io を追加してください）'
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'ネットワークエラーです。通信環境を確認してください'
+  }
+  return err.message || 'ログインに失敗しました'
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -46,6 +65,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [syncReady, setSyncReady] = useState(!configured)
   const [syncError, setSyncError] = useState<string | null>(null)
+  const [authError, setAuthError] = useState<string | null>(null)
+
+  const clearAuthError = useCallback(() => setAuthError(null), [])
 
   useEffect(() => {
     if (!configured) return
@@ -53,14 +75,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const auth = getFirebaseAuth()
     let cancelled = false
 
-    void getRedirectResult(auth).catch(() => {
-      /* ignore: no redirect pending */
-    })
+    void (async () => {
+      try {
+        const result = await getRedirectResult(auth)
+        if (cancelled) return
+        if (result?.user) {
+          sessionStorage.removeItem(REDIRECT_FLAG_KEY)
+          setAuthError(null)
+          return
+        }
+        if (sessionStorage.getItem(REDIRECT_FLAG_KEY) === '1' && !auth.currentUser) {
+          sessionStorage.removeItem(REDIRECT_FLAG_KEY)
+          setAuthError('ログインを完了できませんでした。もう一度お試しください。')
+        }
+      } catch (err) {
+        if (cancelled) return
+        sessionStorage.removeItem(REDIRECT_FLAG_KEY)
+        setAuthError(authErrorMessage(err))
+      }
+    })()
 
     const unsub = onAuthStateChanged(auth, (next) => {
       if (cancelled) return
       setUser(next)
       setReady(true)
+      if (next) {
+        sessionStorage.removeItem(REDIRECT_FLAG_KEY)
+        setAuthError(null)
+      }
     })
 
     return () => {
@@ -106,19 +148,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!configured) {
       throw new Error('Firebase が設定されていません')
     }
+    setAuthError(null)
     const auth = getFirebaseAuth()
     const provider = new GoogleAuthProvider()
     provider.setCustomParameters({ prompt: 'select_account' })
 
-    if (prefersRedirectSignIn()) {
-      await signInWithRedirect(auth, provider)
-      return
-    }
-
+    // ユーザー操作起点なら popup を優先（iPhone Safari でも成功しやすい）
     try {
-      await signInWithPopup(auth, provider)
-    } catch {
-      await signInWithRedirect(auth, provider)
+      await signInWithPopup(auth, provider, browserPopupRedirectResolver)
+      return
+    } catch (popupErr) {
+      const code =
+        popupErr && typeof popupErr === 'object' && 'code' in popupErr
+          ? String((popupErr as { code?: string }).code)
+          : ''
+
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        throw popupErr
+      }
+
+      if (
+        isMobileBrowser() ||
+        code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment'
+      ) {
+        sessionStorage.setItem(REDIRECT_FLAG_KEY, '1')
+        await signInWithRedirect(auth, provider, browserPopupRedirectResolver)
+        return
+      }
+
+      throw popupErr
     }
   }, [configured])
 
@@ -134,10 +193,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       syncReady,
       syncError,
+      authError,
+      clearAuthError,
       signInWithGoogle,
       signOut,
     }),
-    [configured, ready, user, syncReady, syncError, signInWithGoogle, signOut],
+    [
+      configured,
+      ready,
+      user,
+      syncReady,
+      syncError,
+      authError,
+      clearAuthError,
+      signInWithGoogle,
+      signOut,
+    ],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

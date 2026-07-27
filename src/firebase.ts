@@ -1,5 +1,12 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app'
-import { getAuth, type Auth } from 'firebase/auth'
+import {
+  browserLocalPersistence,
+  browserPopupRedirectResolver,
+  indexedDBLocalPersistence,
+  initializeAuth,
+  getAuth,
+  type Auth,
+} from 'firebase/auth'
 import {
   getFirestore,
   initializeFirestore,
@@ -42,7 +49,23 @@ function getApp(): FirebaseApp {
 
 export function getFirebaseAuth(): Auth {
   if (!auth) {
-    auth = getAuth(getApp())
+    const firebaseApp = getApp()
+    try {
+      // Safari / iOS では getAuth() だとリダイレクト復帰が失敗しやすい
+      auth = initializeAuth(firebaseApp, {
+        persistence: indexedDBLocalPersistence,
+        popupRedirectResolver: browserPopupRedirectResolver,
+      })
+    } catch {
+      try {
+        auth = initializeAuth(firebaseApp, {
+          persistence: browserLocalPersistence,
+          popupRedirectResolver: browserPopupRedirectResolver,
+        })
+      } catch {
+        auth = getAuth(firebaseApp)
+      }
+    }
   }
   return auth
 }

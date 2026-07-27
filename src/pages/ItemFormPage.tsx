@@ -229,11 +229,15 @@ export function ItemFormPage() {
       pointsNote: form.pointsNote.trim(),
     }
 
-    const saved = await save(isNew ? null : (id ?? null), payload)
-    setMessage('保存しました')
     if (isNew) {
-      navigate(`/items/${saved.id}`, { replace: true })
+      await save(null, payload)
+      window.alert('登録しました')
+      navigate('/', { replace: true })
+      return
     }
+
+    await save(id ?? null, payload)
+    setMessage('保存しました')
   }
 
   async function handleDelete() {

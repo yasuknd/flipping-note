@@ -18,6 +18,8 @@ export function SettingsPage() {
     user,
     syncReady,
     syncError,
+    authError,
+    clearAuthError,
     signInWithGoogle,
     signOut,
   } = useAuth()
@@ -31,6 +33,7 @@ export function SettingsPage() {
   async function handleSignIn() {
     setAuthBusy(true)
     setMessage('')
+    clearAuthError()
     try {
       await signInWithGoogle()
       setMessage('Googleアカウントでログインしました。PCとスマホで同期されます。')
@@ -256,6 +259,7 @@ export function SettingsPage() {
         </form>
       </Section>
 
+      {authError ? <p className="form-message">{authError}</p> : null}
       {message ? <p className="form-message">{message}</p> : null}
     </div>
   )
