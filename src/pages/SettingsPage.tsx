@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { useAuth } from '../AuthContext'
 import { Field, Section } from '../components/Field'
 import { useSettings } from '../SettingsContext'
 import { formatYenPlain } from '../calc'
@@ -11,11 +12,49 @@ export function SettingsPage() {
     updateMarketplace,
     removeMarketplace,
   } = useSettings()
+  const {
+    configured,
+    ready,
+    user,
+    syncReady,
+    syncError,
+    signInWithGoogle,
+    signOut,
+  } = useAuth()
 
   const [minProfitText, setMinProfitText] = useState(String(settings.minProfit))
   const [newName, setNewName] = useState('')
   const [newFee, setNewFee] = useState('10')
   const [message, setMessage] = useState('')
+  const [authBusy, setAuthBusy] = useState(false)
+
+  async function handleSignIn() {
+    setAuthBusy(true)
+    setMessage('')
+    try {
+      await signInWithGoogle()
+      setMessage('Googleアカウントでログインしました。PCとスマホで同期されます。')
+    } catch (err) {
+      const text = err instanceof Error ? err.message : 'ログインに失敗しました'
+      setMessage(text)
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function handleSignOut() {
+    setAuthBusy(true)
+    setMessage('')
+    try {
+      await signOut()
+      setMessage('ログアウトしました。この端末のローカルデータは残ります。')
+    } catch (err) {
+      const text = err instanceof Error ? err.message : 'ログアウトに失敗しました'
+      setMessage(text)
+    } finally {
+      setAuthBusy(false)
+    }
+  }
 
   function saveMinProfit(e: FormEvent) {
     e.preventDefault()
@@ -51,6 +90,66 @@ export function SettingsPage() {
         <h1>設定</h1>
         <p className="muted">推奨価格と販売先の初期値を決めます</p>
       </div>
+
+      <Section title="アカウント同期">
+        {!configured ? (
+          <p className="muted tight">
+            Firebase 未設定のため、この環境では端末内保存のみです。セットアップ後に Google
+            ログインで PC／スマホ同期が使えます。
+          </p>
+        ) : !ready ? (
+          <p className="muted tight">認証状態を確認中…</p>
+        ) : user ? (
+          <div className="account-panel">
+            <div className="account-row">
+              {user.photoURL ? (
+                <img
+                  className="account-avatar"
+                  src={user.photoURL}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <span className="account-avatar account-avatar-fallback">G</span>
+              )}
+              <div>
+                <p className="account-name">{user.displayName || 'Googleユーザー'}</p>
+                <p className="muted tight">{user.email}</p>
+                <p className="muted tight">
+                  {!syncReady
+                    ? 'クラウドと同期中…'
+                    : syncError
+                      ? `同期エラー: ${syncError}`
+                      : 'クラウド同期オン（この Google アカウント配下）'}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary btn-block"
+              disabled={authBusy}
+              onClick={() => void handleSignOut()}
+            >
+              ログアウト
+            </button>
+          </div>
+        ) : (
+          <div className="account-panel">
+            <p className="muted tight">
+              Google でログインすると、商品・設定がクラウドに保存され、PCとスマホで同じデータを使えます。
+              初回ログイン時に、この端末の既存データがあればクラウドへ取り込みます。
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary btn-block"
+              disabled={authBusy}
+              onClick={() => void handleSignIn()}
+            >
+              Googleでログイン
+            </button>
+          </div>
+        )}
+      </Section>
 
       <Section title="最低限ほしい利益">
         <form className="stack-form" onSubmit={saveMinProfit}>

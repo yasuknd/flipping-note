@@ -1,4 +1,5 @@
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { AuthProvider } from './AuthContext'
 import { Layout } from './components/Layout'
 import { ItemsProvider } from './ItemsContext'
 import { SettingsProvider } from './SettingsContext'
@@ -9,21 +10,23 @@ import { SettingsPage } from './pages/SettingsPage'
 
 export default function App() {
   return (
-    <SettingsProvider>
-      <ItemsProvider>
-        <HashRouter>
-          <Routes>
-            <Route element={<Layout />}>
-              <Route index element={<ListPage />} />
-              <Route path="profits" element={<ProfitsPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route path="items/new" element={<ItemFormPage />} />
-              <Route path="items/:id" element={<ItemFormPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Route>
-          </Routes>
-        </HashRouter>
-      </ItemsProvider>
-    </SettingsProvider>
+    <AuthProvider>
+      <SettingsProvider>
+        <ItemsProvider>
+          <HashRouter>
+            <Routes>
+              <Route element={<Layout />}>
+                <Route index element={<ListPage />} />
+                <Route path="profits" element={<ProfitsPage />} />
+                <Route path="settings" element={<SettingsPage />} />
+                <Route path="items/new" element={<ItemFormPage />} />
+                <Route path="items/:id" element={<ItemFormPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Route>
+            </Routes>
+          </HashRouter>
+        </ItemsProvider>
+      </SettingsProvider>
+    </AuthProvider>
   )
 }

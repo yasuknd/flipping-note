@@ -2,41 +2,88 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react'
+import { useAuth } from './AuthContext'
+import { deleteItemCloud, subscribeItems, upsertItemCloud } from './cloudSync'
 import type { Item, ItemInput } from './types'
 import { deleteItem, loadItems, saveItems, upsertItem } from './storage'
 
 interface ItemsContextValue {
   items: Item[]
-  save: (id: string | null, input: ItemInput) => Item
-  remove: (id: string) => void
+  cloudSyncing: boolean
+  save: (id: string | null, input: ItemInput) => Promise<Item>
+  remove: (id: string) => Promise<void>
 }
 
 const ItemsContext = createContext<ItemsContextValue | null>(null)
 
 export function ItemsProvider({ children }: { children: ReactNode }) {
+  const { user, syncReady } = useAuth()
   const [items, setItems] = useState<Item[]>(() => loadItems())
+  const [cloudSyncing, setCloudSyncing] = useState(false)
 
-  const save = useCallback((id: string | null, input: ItemInput): Item => {
-    const prev = loadItems()
-    const next = upsertItem(prev, id, input)
-    saveItems(next)
-    setItems(next)
-    return id ? next.find((i) => i.id === id)! : next[0]
-  }, [])
+  useEffect(() => {
+    if (!syncReady) return
 
-  const remove = useCallback((id: string) => {
-    setItems((prev) => {
-      const next = deleteItem(prev, id)
-      saveItems(next)
-      return next
-    })
-  }, [])
+    if (!user) {
+      setItems(loadItems())
+      setCloudSyncing(false)
+      return
+    }
 
-  const value = useMemo(() => ({ items, save, remove }), [items, save, remove])
+    setCloudSyncing(true)
+    const unsub = subscribeItems(
+      user.uid,
+      (next) => {
+        setItems(next)
+        setCloudSyncing(false)
+      },
+      () => {
+        setCloudSyncing(false)
+      },
+    )
+    return unsub
+  }, [user, syncReady])
+
+  const save = useCallback(
+    async (id: string | null, input: ItemInput): Promise<Item> => {
+      let saved!: Item
+      setItems((prev) => {
+        const next = upsertItem(prev, id, input)
+        saved = id ? next.find((i) => i.id === id)! : next[0]
+        saveItems(next)
+        return next
+      })
+      if (user) {
+        await upsertItemCloud(user.uid, saved)
+      }
+      return saved
+    },
+    [user],
+  )
+
+  const remove = useCallback(
+    async (id: string) => {
+      setItems((prev) => {
+        const next = deleteItem(prev, id)
+        saveItems(next)
+        return next
+      })
+      if (user) {
+        await deleteItemCloud(user.uid, id)
+      }
+    },
+    [user],
+  )
+
+  const value = useMemo(
+    () => ({ items, cloudSyncing, save, remove }),
+    [items, cloudSyncing, save, remove],
+  )
 
   return <ItemsContext.Provider value={value}>{children}</ItemsContext.Provider>
 }

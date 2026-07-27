@@ -346,19 +346,19 @@ export function ListPage() {
       window.alert('取引中または取引完了にするには、販売価格と売却日を先に入力してください。')
       return
     }
-    save(item.id, toItemInput(item, { status: nextStatus }))
+    void save(item.id, toItemInput(item, { status: nextStatus }))
   }
 
   function handleSalePriceChange(item: Item, salePrice: number | null) {
-    save(item.id, toItemInput(item, { salePrice }))
+    void save(item.id, toItemInput(item, { salePrice }))
   }
 
   function handleSoldDateChange(item: Item, soldDate: string) {
-    save(item.id, toItemInput(item, { soldDate }))
+    void save(item.id, toItemInput(item, { soldDate }))
   }
 
   function handleMemoChange(item: Item, memo: string) {
-    save(item.id, toItemInput(item, { memo }))
+    void save(item.id, toItemInput(item, { memo }))
   }
 
   function handleMarketplaceChange(
@@ -366,7 +366,7 @@ export function ListPage() {
     marketplace: string,
     feeRatePercent: number,
   ) {
-    save(item.id, toItemInput(item, { marketplace, feeRatePercent }))
+    void save(item.id, toItemInput(item, { marketplace, feeRatePercent }))
   }
 
   function exportListCsv() {

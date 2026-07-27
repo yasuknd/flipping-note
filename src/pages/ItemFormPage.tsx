@@ -200,7 +200,7 @@ export function ItemFormPage() {
     }))
   }
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     if (!form.name.trim()) {
       setMessage('商品名を入力してください')
@@ -229,17 +229,17 @@ export function ItemFormPage() {
       pointsNote: form.pointsNote.trim(),
     }
 
-    const saved = save(isNew ? null : (id ?? null), payload)
+    const saved = await save(isNew ? null : (id ?? null), payload)
     setMessage('保存しました')
     if (isNew) {
       navigate(`/items/${saved.id}`, { replace: true })
     }
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!id || isNew) return
     if (!window.confirm('この商品を削除しますか？')) return
-    remove(id)
+    await remove(id)
     navigate('/')
   }
 

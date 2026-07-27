@@ -35,12 +35,34 @@ npm run dev
 1. Safari で上記URLを開く
 2. 共有 → **ホーム画面に追加**
 
-データは端末の `localStorage` に保存されます（サーバーには送られません）。
+未ログイン時は端末の `localStorage` に保存されます。Google ログイン後は Firestore に同期され、PC／スマホで同じデータを使えます。
+
+## Google ログイン同期（Firebase）
+
+1. [Firebase Console](https://console.firebase.google.com/) でプロジェクト作成
+2. Authentication → Sign-in method → **Google** を有効化
+3. Firestore Database を作成（本番モード可）し、リポジトリの `firestore.rules` を反映
+4. プロジェクト設定から Web アプリを追加し、設定値を控える
+5. Authentication → Settings → Authorized domains に追加:
+   - `localhost`
+   - `yasuknd.github.io`
+6. ローカル用に `.env` を作成（`.env.example` をコピー）
+
+```bash
+cp .env.example .env
+# 各 VITE_FIREBASE_* を記入
+```
+
+7. GitHub リポジトリの Settings → Secrets and variables → Actions に同名の Secrets を登録
+8. `main` へ push すると、Secrets を埋め込んでデプロイされます
+
+設定画面の「Googleでログイン」からサインインできます。初回ログイン時、その端末の既存データがあればクラウドへ取り込みます。
 
 ## 設定
 
 ヘッダー右上の「設定」から変更できます。
 
+- **アカウント同期** … Google ログイン／ログアウト
 - **最低限ほしい利益** … 推奨販売価格の計算に反映
 - **販売先登録** … 販売先＋手数料率のセット。商品登録時にプルダウンで選択
 

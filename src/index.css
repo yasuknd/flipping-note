@@ -927,6 +927,40 @@ select {
   animation: page-in 0.24s ease;
 }
 
+.account-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.account-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+}
+
+.account-avatar-fallback {
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: var(--accent-deep);
+}
+
+.account-name {
+  margin: 0;
+  font-weight: 700;
+}
+
 /* ---------- empty ---------- */
 .empty {
   margin-top: 32px;

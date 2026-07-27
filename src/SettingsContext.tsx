@@ -2,10 +2,13 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react'
+import { useAuth } from './AuthContext'
+import { saveSettingsCloud, subscribeSettings } from './cloudSync'
 import type { AppSettings, MarketplacePreset } from './types'
 import { createMarketplaceId, loadSettings, saveSettings } from './storage'
 
@@ -20,15 +23,34 @@ interface SettingsContextValue {
 const SettingsContext = createContext<SettingsContextValue | null>(null)
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
+  const { user, syncReady } = useAuth()
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings())
 
-  const commit = useCallback((updater: (prev: AppSettings) => AppSettings) => {
-    setSettings((prev) => {
-      const next = updater(prev)
-      saveSettings(next)
-      return next
-    })
-  }, [])
+  useEffect(() => {
+    if (!syncReady) return
+
+    if (!user) {
+      setSettings(loadSettings())
+      return
+    }
+
+    const unsub = subscribeSettings(user.uid, setSettings)
+    return unsub
+  }, [user, syncReady])
+
+  const commit = useCallback(
+    (updater: (prev: AppSettings) => AppSettings) => {
+      setSettings((prev) => {
+        const next = updater(prev)
+        saveSettings(next)
+        if (user) {
+          void saveSettingsCloud(user.uid, next)
+        }
+        return next
+      })
+    },
+    [user],
+  )
 
   const setMinProfit = useCallback(
     (value: number) => {
