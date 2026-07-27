@@ -343,6 +343,14 @@ export function ListPage() {
     )
   }, [items, filter, sortKey, sortOrder])
 
+  async function persist(itemId: string, input: ReturnType<typeof toItemInput>) {
+    try {
+      await save(itemId, input)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'クラウドへの保存に失敗しました')
+    }
+  }
+
   function handleStatusChange(item: Item, nextStatus: ItemStatus) {
     if (
       (nextStatus === 'sold' || nextStatus === 'completed') &&
@@ -351,16 +359,16 @@ export function ListPage() {
       window.alert('取引中または取引完了にするには、販売価格と売却日を先に入力してください。')
       return
     }
-    void save(item.id, toItemInput(item, { status: nextStatus }))
+    void persist(item.id, toItemInput(item, { status: nextStatus }))
   }
 
   function handleSalePriceChange(item: Item, salePrice: number | null) {
-    void save(item.id, toItemInput(item, { salePrice }))
+    void persist(item.id, toItemInput(item, { salePrice }))
   }
 
   function handleSoldDateChange(item: Item, soldDate: string) {
     if (soldDate) {
-      void save(
+      void persist(
         item.id,
         toItemInput(item, {
           soldDate,
@@ -369,7 +377,7 @@ export function ListPage() {
       )
       return
     }
-    void save(
+    void persist(
       item.id,
       toItemInput(item, {
         soldDate: '',
@@ -379,7 +387,7 @@ export function ListPage() {
   }
 
   function handleMemoChange(item: Item, memo: string) {
-    void save(item.id, toItemInput(item, { memo }))
+    void persist(item.id, toItemInput(item, { memo }))
   }
 
   function handleMarketplaceChange(
@@ -387,7 +395,7 @@ export function ListPage() {
     marketplace: string,
     feeRatePercent: number,
   ) {
-    void save(item.id, toItemInput(item, { marketplace, feeRatePercent }))
+    void persist(item.id, toItemInput(item, { marketplace, feeRatePercent }))
   }
 
   function exportListCsv() {

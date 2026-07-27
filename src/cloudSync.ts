@@ -1,27 +1,11 @@
-import {
-  collection,
-  deleteDoc,
-  doc,
-  enableNetwork,
-  onSnapshot,
-  setDoc,
-  type Unsubscribe,
-} from 'firebase/firestore'
-import { getFirebaseAuth, getFirebaseDb, getFirebaseProjectId } from './firebase'
+/**
+ * Firestore 同期は REST API を正とする。
+ * SDK の setDoc/onSnapshot は環境によってハング・未到達になり、
+ * 「画面上は保存されたがリロードで戻る」症状の原因になるため使わない。
+ */
+import { getFirebaseAuth, getFirebaseProjectId } from './firebase'
 import { clearLocalData, loadItems, loadSettings } from './storage'
 import { DEFAULT_SETTINGS, normalizeItem, type AppSettings, type Item } from './types'
-
-function itemsCol(uid: string) {
-  return collection(getFirebaseDb(), 'users', uid, 'items')
-}
-
-function itemDoc(uid: string, id: string) {
-  return doc(getFirebaseDb(), 'users', uid, 'items', id)
-}
-
-function settingsDoc(uid: string) {
-  return doc(getFirebaseDb(), 'users', uid, 'settings', 'app')
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -49,7 +33,7 @@ function formatSyncError(err: unknown): Error {
       `Firestore データベースが見つかりません（project: ${projectId}）。コンソールで Firestore を作成してください。`,
     )
   }
-  if (/offline/i.test(raw)) {
+  if (/offline|Failed to fetch|NetworkError/i.test(raw)) {
     return new Error(
       'クラウドに接続できませんでした。Wi-Fi を確認し、再読み込みしてください。',
     )
@@ -62,6 +46,7 @@ function toFirestoreValue(value: unknown): Record<string, unknown> {
   if (typeof value === 'string') return { stringValue: value }
   if (typeof value === 'boolean') return { booleanValue: value }
   if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return { doubleValue: 0 }
     return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value }
   }
   if (Array.isArray(value)) {
@@ -70,6 +55,7 @@ function toFirestoreValue(value: unknown): Record<string, unknown> {
   if (typeof value === 'object') {
     const fields: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v === undefined) continue
       fields[k] = toFirestoreValue(v)
     }
     return { mapValue: { fields } }
@@ -99,27 +85,57 @@ function fromFirestoreValue(value: Record<string, unknown>): unknown {
   return null
 }
 
+function docUrl(docPath: string): string {
+  const projectId = getFirebaseProjectId()
+  return (
+    `https://firestore.googleapis.com/v1/projects/${projectId}` +
+    `/databases/(default)/documents/${docPath}`
+  )
+}
+
 async function restUpsertDocument(
   docPath: string,
   data: Record<string, unknown>,
   token: string,
 ): Promise<void> {
-  const projectId = getFirebaseProjectId()
-  const url =
-    `https://firestore.googleapis.com/v1/projects/${projectId}` +
-    `/databases/(default)/documents/${docPath}`
   const fields: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(data)) {
+    if (v === undefined) continue
     fields[k] = toFirestoreValue(v)
   }
-  const res = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ fields }),
-  })
+  const fieldPaths = Object.keys(fields)
+  if (fieldPaths.length === 0) {
+    throw new Error('保存するデータが空です')
+  }
+
+  const mask = fieldPaths
+    .map((path) => `updateMask.fieldPaths=${encodeURIComponent(path)}`)
+    .join('&')
+  const url = `${docUrl(docPath)}?${mask}`
+
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 20000)
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ fields }),
+      signal: controller.signal,
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('クラウド書き込みがタイムアウトしました。再試行してください。')
+    }
+    throw err
+  } finally {
+    window.clearTimeout(timer)
+  }
+
   if (!res.ok) {
     const body = await res.text()
     if (/PERMISSION_DENIED|permission/i.test(body)) {
@@ -127,22 +143,53 @@ async function restUpsertDocument(
         'Firestore の権限エラーです。コンソールのルールを公開済みか確認してください。',
       )
     }
-    throw new Error(`クラウド書き込みエラー (${res.status})`)
+    throw new Error(`クラウド書き込みエラー (${res.status}): ${body.slice(0, 180)}`)
   }
 }
 
 async function restDeleteDocument(docPath: string, token: string): Promise<void> {
-  const projectId = getFirebaseProjectId()
-  const url =
-    `https://firestore.googleapis.com/v1/projects/${projectId}` +
-    `/databases/(default)/documents/${docPath}`
-  const res = await fetch(url, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 20000)
+  let res: Response
+  try {
+    res = await fetch(docUrl(docPath), {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('クラウド削除がタイムアウトしました。再試行してください。')
+    }
+    throw err
+  } finally {
+    window.clearTimeout(timer)
+  }
   if (!res.ok && res.status !== 404) {
     throw new Error(`クラウド削除エラー (${res.status})`)
   }
+}
+
+async function restGetDocument(
+  docPath: string,
+  token: string,
+): Promise<Record<string, unknown> | null> {
+  const res = await fetch(docUrl(docPath), {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 404) return null
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`クラウド読み取りエラー (${res.status}): ${body.slice(0, 120)}`)
+  }
+  const data = (await res.json()) as {
+    fields?: Record<string, Record<string, unknown>>
+  }
+  const raw: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(data.fields ?? {})) {
+    raw[key] = fromFirestoreValue(value)
+  }
+  return raw
 }
 
 async function restListItems(uid: string, token: string): Promise<Item[]> {
@@ -179,40 +226,6 @@ async function restListItems(uid: string, token: string): Promise<Item[]> {
   return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
 
-async function restGetSettings(uid: string, token: string): Promise<AppSettings | null> {
-  const projectId = getFirebaseProjectId()
-  const url =
-    `https://firestore.googleapis.com/v1/projects/${projectId}` +
-    `/databases/(default)/documents/users/${uid}/settings/app`
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (res.status === 404) return null
-  if (!res.ok) return null
-  const data = (await res.json()) as {
-    fields?: Record<string, Record<string, unknown>>
-  }
-  const raw: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(data.fields ?? {})) {
-    raw[key] = fromFirestoreValue(value)
-  }
-  return {
-    minProfit:
-      typeof raw.minProfit === 'number' && Number.isFinite(raw.minProfit)
-        ? raw.minProfit
-        : DEFAULT_SETTINGS.minProfit,
-    marketplaces: Array.isArray(raw.marketplaces)
-      ? (raw.marketplaces as AppSettings['marketplaces']).filter(
-          (m) =>
-            Boolean(m) &&
-            typeof m.id === 'string' &&
-            typeof m.name === 'string' &&
-            typeof m.feeRatePercent === 'number',
-        )
-      : structuredClone(DEFAULT_SETTINGS.marketplaces),
-  }
-}
-
 async function touchMeta(uid: string, token: string, itemCount: number): Promise<void> {
   await restUpsertDocument(
     `users/${uid}/meta/sync`,
@@ -225,38 +238,73 @@ async function touchMeta(uid: string, token: string, itemCount: number): Promise
   )
 }
 
-/**
- * 初回のみ: クラウドが空なら旧 localStorage を取り込んで破棄。
- * 以降はクラウド専用。
- */
+function itemToPlain(item: Item): Record<string, unknown> {
+  return {
+    brand: item.brand,
+    name: item.name,
+    color: item.color,
+    size: item.size,
+    modelNumber: item.modelNumber,
+    source: item.source,
+    purchasePrice: item.purchasePrice,
+    discount: item.discount,
+    purchaseShipping: item.purchaseShipping,
+    purchaseDate: item.purchaseDate,
+    memo: item.memo,
+    marketplace: item.marketplace,
+    feeRatePercent: item.feeRatePercent,
+    saleShipping: item.saleShipping,
+    salePrice: item.salePrice,
+    soldDate: item.soldDate,
+    status: item.status,
+    pointsNote: item.pointsNote,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  }
+}
+
+function settingsToPlain(settings: AppSettings): Record<string, unknown> {
+  return {
+    minProfit: settings.minProfit,
+    marketplaces: settings.marketplaces.map((m) => ({
+      id: m.id,
+      name: m.name,
+      feeRatePercent: m.feeRatePercent,
+    })),
+  }
+}
+
+/** 初回: クラウド空なら旧ローカルを取り込み、その後ローカル破棄 */
 export async function ensureCloudInitialized(uid: string): Promise<void> {
   try {
     const token = await ensureAuthToken()
-    await enableNetwork(getFirebaseDb())
-    await sleep(150)
+    await sleep(100)
 
     const cloudItems = await restListItems(uid, token)
-    let settings = await restGetSettings(uid, token)
+    let settingsRaw = await restGetDocument(`users/${uid}/settings/app`, token)
 
     if (cloudItems.length === 0) {
       const legacyItems = loadItems()
-      if (legacyItems.length > 0) {
-        for (const item of legacyItems) {
-          await restUpsertDocument(`users/${uid}/items/${item.id}`, { ...item }, token)
-        }
+      for (const item of legacyItems) {
+        await restUpsertDocument(
+          `users/${uid}/items/${item.id}`,
+          itemToPlain(item),
+          token,
+        )
       }
     }
 
-    if (!settings) {
+    if (!settingsRaw) {
       const legacySettings = loadSettings()
-      settings = legacySettings
-      await restUpsertDocument(`users/${uid}/settings/app`, { ...settings }, token)
+      await restUpsertDocument(
+        `users/${uid}/settings/app`,
+        settingsToPlain(legacySettings),
+        token,
+      )
     }
 
     const finalItems = await restListItems(uid, token)
     await touchMeta(uid, token, finalItems.length)
-
-    // 端末ローカルは使わない
     clearLocalData()
   } catch (err) {
     throw formatSyncError(err)
@@ -264,93 +312,84 @@ export async function ensureCloudInitialized(uid: string): Promise<void> {
 }
 
 export async function fetchItems(uid: string): Promise<Item[]> {
-  const token = await ensureAuthToken()
-  return restListItems(uid, token)
+  try {
+    const token = await ensureAuthToken()
+    return await restListItems(uid, token)
+  } catch (err) {
+    throw formatSyncError(err)
+  }
 }
 
 export async function fetchSettings(uid: string): Promise<AppSettings> {
-  const token = await ensureAuthToken()
-  const settings = await restGetSettings(uid, token)
-  return settings ?? structuredClone(DEFAULT_SETTINGS)
+  try {
+    const token = await ensureAuthToken()
+    const raw = await restGetDocument(`users/${uid}/settings/app`, token)
+    if (!raw) return structuredClone(DEFAULT_SETTINGS)
+    return {
+      minProfit:
+        typeof raw.minProfit === 'number' && Number.isFinite(raw.minProfit)
+          ? raw.minProfit
+          : DEFAULT_SETTINGS.minProfit,
+      marketplaces: Array.isArray(raw.marketplaces)
+        ? (raw.marketplaces as AppSettings['marketplaces']).filter(
+            (m) =>
+              Boolean(m) &&
+              typeof m.id === 'string' &&
+              typeof m.name === 'string' &&
+              typeof m.feeRatePercent === 'number',
+          )
+        : structuredClone(DEFAULT_SETTINGS.marketplaces),
+    }
+  } catch (err) {
+    throw formatSyncError(err)
+  }
 }
 
 export async function upsertItemCloud(uid: string, item: Item): Promise<void> {
   try {
-    await setDoc(itemDoc(uid, item.id), item)
-  } catch {
     const token = await ensureAuthToken()
-    await restUpsertDocument(`users/${uid}/items/${item.id}`, { ...item }, token)
+    await restUpsertDocument(`users/${uid}/items/${item.id}`, itemToPlain(item), token)
+
+    // 読み戻して書き込み成功を確認
+    const verify = await restGetDocument(`users/${uid}/items/${item.id}`, token)
+    if (!verify) {
+      throw new Error('保存を確認できませんでした（書き込み未反映）')
+    }
+    if (String(verify.updatedAt ?? '') !== item.updatedAt) {
+      throw new Error('保存を確認できませんでした（内容が一致しません）')
+    }
+
+    const items = await restListItems(uid, token)
+    await touchMeta(uid, token, items.length)
+  } catch (err) {
+    throw formatSyncError(err)
   }
 }
 
 export async function deleteItemCloud(uid: string, id: string): Promise<void> {
   try {
-    await deleteDoc(itemDoc(uid, id))
-  } catch {
     const token = await ensureAuthToken()
     await restDeleteDocument(`users/${uid}/items/${id}`, token)
+    const items = await restListItems(uid, token)
+    await touchMeta(uid, token, items.length)
+  } catch (err) {
+    throw formatSyncError(err)
   }
 }
 
 export async function saveSettingsCloud(uid: string, settings: AppSettings): Promise<void> {
   try {
-    await setDoc(settingsDoc(uid), settings)
-  } catch {
     const token = await ensureAuthToken()
-    await restUpsertDocument(`users/${uid}/settings/app`, { ...settings }, token)
+    await restUpsertDocument(`users/${uid}/settings/app`, settingsToPlain(settings), token)
+
+    const verify = await restGetDocument(`users/${uid}/settings/app`, token)
+    if (!verify) {
+      throw new Error('設定の保存を確認できませんでした')
+    }
+    if (Number(verify.minProfit) !== settings.minProfit) {
+      throw new Error('設定の保存を確認できませんでした（最低利益が一致しません）')
+    }
+  } catch (err) {
+    throw formatSyncError(err)
   }
-}
-
-export function subscribeItems(
-  uid: string,
-  onChange: (items: Item[]) => void,
-  onError?: (error: Error) => void,
-): Unsubscribe {
-  return onSnapshot(
-    itemsCol(uid),
-    (snap) => {
-      if (snap.metadata.hasPendingWrites) return
-      if (snap.metadata.fromCache) return
-
-      const items = snap.docs
-        .map((d) => normalizeItem({ ...(d.data() as Partial<Item>), id: d.id }))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      onChange(items)
-    },
-    (error) => onError?.(formatSyncError(error)),
-  )
-}
-
-export function subscribeSettings(
-  uid: string,
-  onChange: (settings: AppSettings) => void,
-  onError?: (error: Error) => void,
-): Unsubscribe {
-  return onSnapshot(
-    settingsDoc(uid),
-    (snap) => {
-      if (!snap.exists()) return
-      if (snap.metadata.hasPendingWrites) return
-      if (snap.metadata.fromCache) return
-
-      const data = snap.data() as Partial<AppSettings>
-      const settings: AppSettings = {
-        minProfit:
-          typeof data.minProfit === 'number' && Number.isFinite(data.minProfit)
-            ? data.minProfit
-            : DEFAULT_SETTINGS.minProfit,
-        marketplaces: Array.isArray(data.marketplaces)
-          ? data.marketplaces.filter(
-              (m): m is AppSettings['marketplaces'][number] =>
-                Boolean(m) &&
-                typeof m.id === 'string' &&
-                typeof m.name === 'string' &&
-                typeof m.feeRatePercent === 'number',
-            )
-          : structuredClone(DEFAULT_SETTINGS.marketplaces),
-      }
-      onChange(settings)
-    },
-    (error) => onError?.(formatSyncError(error)),
-  )
 }

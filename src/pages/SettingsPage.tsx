@@ -54,18 +54,22 @@ export function SettingsPage() {
     }
   }
 
-  function saveMinProfit(e: FormEvent) {
+  async function saveMinProfit(e: FormEvent) {
     e.preventDefault()
     const n = Number(minProfitText)
     if (!Number.isFinite(n) || n < 0) {
       setMessage('最低利益は0以上の金額で入力してください')
       return
     }
-    setMinProfit(n)
-    setMessage('最低利益を保存しました')
+    try {
+      await setMinProfit(n)
+      setMessage('最低利益を保存しました')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '保存に失敗しました')
+    }
   }
 
-  function handleAdd(e: FormEvent) {
+  async function handleAdd(e: FormEvent) {
     e.preventDefault()
     const fee = Number(newFee)
     if (!newName.trim()) {
@@ -76,10 +80,27 @@ export function SettingsPage() {
       setMessage('手数料率は0〜99.9で入力してください')
       return
     }
-    addMarketplace(newName, fee)
-    setNewName('')
-    setNewFee('10')
-    setMessage('販売先を追加しました')
+    try {
+      await addMarketplace(newName, fee)
+      setNewName('')
+      setNewFee('10')
+      setMessage('販売先を追加しました')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '追加に失敗しました')
+    }
+  }
+
+  async function persistMarketplace(
+    id: string,
+    name: string,
+    feeRatePercent: number,
+  ) {
+    try {
+      await updateMarketplace(id, name, feeRatePercent)
+      setMessage('販売先を保存しました')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '保存に失敗しました')
+    }
   }
 
   return (
@@ -167,28 +188,30 @@ export function SettingsPage() {
               <li key={m.id} className="preset-row">
                 <div className="preset-fields">
                   <input
-                    value={m.name}
+                    key={`${m.id}-name-${m.name}`}
+                    defaultValue={m.name}
                     aria-label="販売先名"
-                    onChange={(e) =>
-                      updateMarketplace(m.id, e.target.value, m.feeRatePercent)
-                    }
+                    onBlur={(e) => {
+                      const next = e.target.value.trim()
+                      if (!next || next === m.name) return
+                      void persistMarketplace(m.id, next, m.feeRatePercent)
+                    }}
                   />
                   <div className="fee-wrap">
                     <input
+                      key={`${m.id}-fee-${m.feeRatePercent}`}
                       type="number"
                       inputMode="decimal"
                       min={0}
                       max={99.9}
                       step={0.1}
-                      value={m.feeRatePercent}
+                      defaultValue={m.feeRatePercent}
                       aria-label="手数料率"
-                      onChange={(e) =>
-                        updateMarketplace(
-                          m.id,
-                          m.name,
-                          Number(e.target.value) || 0,
-                        )
-                      }
+                      onBlur={(e) => {
+                        const fee = Number(e.target.value) || 0
+                        if (fee === m.feeRatePercent) return
+                        void persistMarketplace(m.id, m.name, fee)
+                      }}
                     />
                     <span className="fee-suffix">%</span>
                   </div>
@@ -197,9 +220,14 @@ export function SettingsPage() {
                   type="button"
                   className="btn btn-danger btn-sm"
                   onClick={() => {
-                    if (window.confirm(`「${m.name}」を削除しますか？`)) {
-                      removeMarketplace(m.id)
-                    }
+                    if (!window.confirm(`「${m.name}」を削除しますか？`)) return
+                    void removeMarketplace(m.id)
+                      .then(() => setMessage('販売先を削除しました'))
+                      .catch((err: unknown) =>
+                        setMessage(
+                          err instanceof Error ? err.message : '削除に失敗しました',
+                        ),
+                      )
                   }}
                 >
                   削除

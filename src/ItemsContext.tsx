@@ -9,12 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useAuth } from './AuthContext'
-import {
-  deleteItemCloud,
-  fetchItems,
-  subscribeItems,
-  upsertItemCloud,
-} from './cloudSync'
+import { deleteItemCloud, fetchItems, upsertItemCloud } from './cloudSync'
 import type { Item, ItemInput } from './types'
 import { deleteItem, upsertItem } from './storage'
 
@@ -43,48 +38,31 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     setCloudSyncing(true)
 
-    void fetchItems(user.uid)
-      .then((next) => {
+    const refresh = async () => {
+      if (pendingWrites.current > 0) return
+      try {
+        const next = await fetchItems(user.uid)
         if (cancelled || pendingWrites.current > 0) return
         setItems(next)
-        setCloudSyncing(false)
-      })
-      .catch(() => {
+      } finally {
         if (!cancelled) setCloudSyncing(false)
-      })
+      }
+    }
 
-    const unsub = subscribeItems(
-      user.uid,
-      (next) => {
-        if (cancelled || pendingWrites.current > 0) return
-        setItems(next)
-        setCloudSyncing(false)
-      },
-      () => {
-        if (!cancelled) setCloudSyncing(false)
-      },
-    )
+    void refresh()
 
     const onForeground = () => {
-      if (document.visibilityState !== 'visible') return
-      if (pendingWrites.current > 0) return
-      void fetchItems(user.uid)
-        .then((next) => {
-          if (cancelled || pendingWrites.current > 0) return
-          setItems(next)
-        })
-        .catch(() => {
-          /* ignore */
-        })
+      if (document.visibilityState === 'visible') void refresh()
     }
     window.addEventListener('focus', onForeground)
     document.addEventListener('visibilitychange', onForeground)
+    const timer = window.setInterval(() => void refresh(), 15000)
 
     return () => {
       cancelled = true
-      unsub()
       window.removeEventListener('focus', onForeground)
       document.removeEventListener('visibilitychange', onForeground)
+      window.clearInterval(timer)
     }
   }, [user, syncReady])
 
@@ -104,9 +82,12 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         await upsertItemCloud(user.uid, saved)
         return saved
       } catch (err) {
-        // 失敗時はクラウドの最新で戻す
-        const latest = await fetchItems(user.uid)
-        setItems(latest)
+        try {
+          const latest = await fetchItems(user.uid)
+          setItems(latest)
+        } catch {
+          /* ignore */
+        }
         throw err
       } finally {
         pendingWrites.current = Math.max(0, pendingWrites.current - 1)
@@ -124,8 +105,12 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       try {
         await deleteItemCloud(user.uid, id)
       } catch (err) {
-        const latest = await fetchItems(user.uid)
-        setItems(latest)
+        try {
+          const latest = await fetchItems(user.uid)
+          setItems(latest)
+        } catch {
+          /* ignore */
+        }
         throw err
       } finally {
         pendingWrites.current = Math.max(0, pendingWrites.current - 1)

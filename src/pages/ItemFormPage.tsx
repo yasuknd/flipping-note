@@ -262,15 +262,19 @@ export function ItemFormPage() {
       pointsNote: form.pointsNote.trim(),
     }
 
-    if (isNew) {
-      await save(null, payload)
-      window.alert('登録しました')
-      navigate('/', { replace: true })
-      return
-    }
+    try {
+      if (isNew) {
+        await save(null, payload)
+        window.alert('登録しました')
+        navigate('/', { replace: true })
+        return
+      }
 
-    await save(id ?? null, payload)
-    setMessage('保存しました')
+      await save(id ?? null, payload)
+      setMessage('保存しました')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'クラウドへの保存に失敗しました')
+    }
   }
 
   async function handleDelete() {
