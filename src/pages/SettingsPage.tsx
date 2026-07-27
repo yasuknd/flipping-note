@@ -26,6 +26,8 @@ export function SettingsPage() {
   const [message, setMessage] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
   const [syncBusy, setSyncBusy] = useState(false)
+  const [savingMinProfit, setSavingMinProfit] = useState(false)
+  const [addingMarketplace, setAddingMarketplace] = useState(false)
 
   async function handleRetrySync() {
     setSyncBusy(true)
@@ -56,37 +58,53 @@ export function SettingsPage() {
 
   async function saveMinProfit(e: FormEvent) {
     e.preventDefault()
+    if (savingMinProfit) return
     const n = Number(minProfitText)
     if (!Number.isFinite(n) || n < 0) {
-      setMessage('最低利益は0以上の金額で入力してください')
+      window.alert('最低利益は0以上の金額で入力してください')
       return
     }
+    setSavingMinProfit(true)
+    setMessage('')
     try {
       await setMinProfit(n)
+      window.alert('最低利益を保存しました')
       setMessage('最低利益を保存しました')
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : '保存に失敗しました')
+      const text = err instanceof Error ? err.message : '保存に失敗しました'
+      setMessage(text)
+      window.alert(`保存に失敗しました\n${text}`)
+    } finally {
+      setSavingMinProfit(false)
     }
   }
 
   async function handleAdd(e: FormEvent) {
     e.preventDefault()
+    if (addingMarketplace) return
     const fee = Number(newFee)
     if (!newName.trim()) {
-      setMessage('販売先名を入力してください')
+      window.alert('販売先名を入力してください')
       return
     }
     if (!Number.isFinite(fee) || fee < 0 || fee >= 100) {
-      setMessage('手数料率は0〜99.9で入力してください')
+      window.alert('手数料率は0〜99.9で入力してください')
       return
     }
+    setAddingMarketplace(true)
+    setMessage('')
     try {
       await addMarketplace(newName, fee)
       setNewName('')
       setNewFee('10')
+      window.alert('販売先を追加しました')
       setMessage('販売先を追加しました')
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : '追加に失敗しました')
+      const text = err instanceof Error ? err.message : '追加に失敗しました'
+      setMessage(text)
+      window.alert(`追加に失敗しました\n${text}`)
+    } finally {
+      setAddingMarketplace(false)
     }
   }
 
@@ -97,9 +115,12 @@ export function SettingsPage() {
   ) {
     try {
       await updateMarketplace(id, name, feeRatePercent)
+      window.alert('販売先を保存しました')
       setMessage('販売先を保存しました')
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : '保存に失敗しました')
+      const text = err instanceof Error ? err.message : '保存に失敗しました'
+      setMessage(text)
+      window.alert(`保存に失敗しました\n${text}`)
     }
   }
 
@@ -109,6 +130,8 @@ export function SettingsPage() {
         <h1>設定</h1>
         <p className="muted">推奨価格と販売先の初期値を決めます</p>
       </div>
+
+      {message ? <p className="form-message">{message}</p> : null}
 
       <Section title="アカウント">
         {user ? (
@@ -169,8 +192,12 @@ export function SettingsPage() {
               onChange={(e) => setMinProfitText(e.target.value)}
             />
           </Field>
-          <button type="submit" className="btn btn-primary btn-block">
-            最低利益を保存
+          <button
+            type="submit"
+            className="btn btn-primary btn-block"
+            disabled={savingMinProfit}
+          >
+            {savingMinProfit ? '保存中…' : '最低利益を保存'}
           </button>
         </form>
       </Section>
@@ -260,13 +287,15 @@ export function SettingsPage() {
               />
             </Field>
           </div>
-          <button type="submit" className="btn btn-ghost btn-block">
-            販売先を追加
+          <button
+            type="submit"
+            className="btn btn-ghost btn-block"
+            disabled={addingMarketplace}
+          >
+            {addingMarketplace ? '追加中…' : '販売先を追加'}
           </button>
         </form>
       </Section>
-
-      {message ? <p className="form-message">{message}</p> : null}
     </div>
   )
 }

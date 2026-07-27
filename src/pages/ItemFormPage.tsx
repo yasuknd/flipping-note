@@ -115,6 +115,8 @@ export function ItemFormPage() {
         : '',
   )
   const [message, setMessage] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const brandOptions = useMemo(
     () => uniqueSorted(items.map((item) => item.brand)),
@@ -235,8 +237,10 @@ export function ItemFormPage() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
+    if (saving || deleting) return
+
     if (!form.name.trim()) {
-      setMessage('商品名を入力してください')
+      window.alert('商品名を入力してください')
       return
     }
 
@@ -244,7 +248,7 @@ export function ItemFormPage() {
       (form.status === 'sold' || form.status === 'completed') &&
       (salePrice == null || !form.soldDate)
     ) {
-      setMessage('取引中・取引完了にするには販売価格と売却日が必要です')
+      window.alert('取引中・取引完了にするには販売価格と売却日が必要です')
       return
     }
 
@@ -262,26 +266,41 @@ export function ItemFormPage() {
       pointsNote: form.pointsNote.trim(),
     }
 
+    setSaving(true)
+    setMessage('')
     try {
       if (isNew) {
         await save(null, payload)
         window.alert('登録しました')
-        navigate('/', { replace: true })
-        return
+      } else {
+        await save(id ?? null, payload)
+        window.alert('保存しました')
       }
-
-      await save(id ?? null, payload)
-      setMessage('保存しました')
+      navigate('/', { replace: true })
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'クラウドへの保存に失敗しました')
+      const text = err instanceof Error ? err.message : 'クラウドへの保存に失敗しました'
+      setMessage(text)
+      window.alert(`保存に失敗しました\n${text}`)
+    } finally {
+      setSaving(false)
     }
   }
 
   async function handleDelete() {
-    if (!id || isNew) return
+    if (!id || isNew || saving || deleting) return
     if (!window.confirm('この商品を削除しますか？')) return
-    await remove(id)
-    navigate('/')
+    setDeleting(true)
+    try {
+      await remove(id)
+      window.alert('削除しました')
+      navigate('/', { replace: true })
+    } catch (err) {
+      const text = err instanceof Error ? err.message : '削除に失敗しました'
+      setMessage(text)
+      window.alert(`削除に失敗しました\n${text}`)
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -297,6 +316,12 @@ export function ItemFormPage() {
       </div>
 
       <form className="form" onSubmit={handleSubmit}>
+        {saving || deleting ? (
+          <p className="form-message">
+            {saving ? 'クラウドに保存中です…' : '削除中です…'}
+          </p>
+        ) : null}
+        {message ? <p className="form-message">{message}</p> : null}
         <Section title="仕入れ情報">
           <Field label="ブランド" hint="英語は半角・頭文字大文字に自動調整">
             <Combobox
@@ -538,12 +563,21 @@ export function ItemFormPage() {
         {message ? <p className="form-message">{message}</p> : null}
 
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary btn-block">
-            保存
+          <button
+            type="submit"
+            className="btn btn-primary btn-block"
+            disabled={saving || deleting}
+          >
+            {saving ? '保存中…' : '保存'}
           </button>
           {!isNew ? (
-            <button type="button" className="btn btn-danger btn-block" onClick={handleDelete}>
-              削除
+            <button
+              type="button"
+              className="btn btn-danger btn-block"
+              disabled={saving || deleting}
+              onClick={() => void handleDelete()}
+            >
+              {deleting ? '削除中…' : '削除'}
             </button>
           ) : null}
         </div>
