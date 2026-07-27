@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useAuth } from './AuthContext'
-import { saveSettingsCloud, subscribeSettings } from './cloudSync'
+import { pullSettingsFromCloud, saveSettingsCloud, subscribeSettings } from './cloudSync'
 import type { AppSettings, MarketplacePreset } from './types'
 import { createMarketplaceId, loadSettings, saveSettings } from './storage'
 
@@ -34,8 +34,37 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    const unsub = subscribeSettings(user.uid, setSettings)
-    return unsub
+    let cancelled = false
+
+    const applyCloud = async () => {
+      try {
+        const next = await pullSettingsFromCloud(user.uid)
+        if (!cancelled && next) setSettings(next)
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const unsub = subscribeSettings(user.uid, (next) => {
+      if (!cancelled) setSettings(next)
+    })
+
+    void applyCloud()
+
+    const onForeground = () => {
+      if (document.visibilityState === 'visible') void applyCloud()
+    }
+    window.addEventListener('focus', onForeground)
+    document.addEventListener('visibilitychange', onForeground)
+    const timer = window.setInterval(() => void applyCloud(), 20000)
+
+    return () => {
+      cancelled = true
+      unsub()
+      window.removeEventListener('focus', onForeground)
+      document.removeEventListener('visibilitychange', onForeground)
+      window.clearInterval(timer)
+    }
   }, [user, syncReady])
 
   const commit = useCallback(

@@ -8,7 +8,12 @@ import {
   type ReactNode,
 } from 'react'
 import { useAuth } from './AuthContext'
-import { deleteItemCloud, subscribeItems, upsertItemCloud } from './cloudSync'
+import {
+  deleteItemCloud,
+  pullItemsFromCloud,
+  subscribeItems,
+  upsertItemCloud,
+} from './cloudSync'
 import type { Item, ItemInput } from './types'
 import { deleteItem, loadItems, saveItems, upsertItem } from './storage'
 
@@ -35,18 +40,49 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       return
     }
 
+    let cancelled = false
     setCloudSyncing(true)
+
+    const applyCloud = async () => {
+      try {
+        const next = await pullItemsFromCloud(user.uid)
+        if (!cancelled) {
+          setItems(next)
+          setCloudSyncing(false)
+        }
+      } catch {
+        if (!cancelled) setCloudSyncing(false)
+      }
+    }
+
     const unsub = subscribeItems(
       user.uid,
       (next) => {
+        if (cancelled) return
         setItems(next)
         setCloudSyncing(false)
       },
       () => {
-        setCloudSyncing(false)
+        if (!cancelled) setCloudSyncing(false)
       },
     )
-    return unsub
+
+    void applyCloud()
+
+    const onForeground = () => {
+      if (document.visibilityState === 'visible') void applyCloud()
+    }
+    window.addEventListener('focus', onForeground)
+    document.addEventListener('visibilitychange', onForeground)
+    const timer = window.setInterval(() => void applyCloud(), 20000)
+
+    return () => {
+      cancelled = true
+      unsub()
+      window.removeEventListener('focus', onForeground)
+      document.removeEventListener('visibilitychange', onForeground)
+      window.clearInterval(timer)
+    }
   }, [user, syncReady])
 
   const save = useCallback(
