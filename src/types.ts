@@ -20,7 +20,11 @@ export interface Item {
   memo: string
   marketplace: string
   feeRatePercent: number
+  /** 手数料割引（%）。販売手数料率に対する割引 */
+  feeDiscountPercent: number
   saleShipping: number
+  /** クーポン（円）。利益に上乗せ */
+  couponAmount: number
   salePrice: number | null
   soldDate: string
   status: ItemStatus
@@ -91,7 +95,9 @@ export const EMPTY_ITEM_INPUT: ItemInput = {
   memo: '',
   marketplace: '',
   feeRatePercent: 10,
+  feeDiscountPercent: 0,
   saleShipping: 0,
+  couponAmount: 0,
   salePrice: null,
   soldDate: '',
   status: 'purchased',
@@ -110,6 +116,14 @@ export function normalizeItem(raw: Partial<Item> & { id: string }): Item {
     color: raw.color ?? '',
     size: raw.size ?? '',
     modelNumber: raw.modelNumber ?? '',
+    feeDiscountPercent:
+      typeof raw.feeDiscountPercent === 'number' && Number.isFinite(raw.feeDiscountPercent)
+        ? raw.feeDiscountPercent
+        : 0,
+    couponAmount:
+      typeof raw.couponAmount === 'number' && Number.isFinite(raw.couponAmount)
+        ? raw.couponAmount
+        : 0,
     id: raw.id,
     createdAt: raw.createdAt ?? new Date().toISOString(),
     updatedAt: raw.updatedAt ?? new Date().toISOString(),

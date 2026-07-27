@@ -40,16 +40,18 @@ export function Metric({
   value,
   note,
   emphasis,
+  valueClassName,
 }: {
   label: string
   value: string
   note?: string
   emphasis?: 'positive' | 'negative' | 'neutral'
+  valueClassName?: string
 }) {
   return (
     <div className={`metric ${emphasis ? `metric-${emphasis}` : ''}`}>
       <p className="metric-label">{label}</p>
-      <p className="metric-value">
+      <p className={`metric-value ${valueClassName ?? ''}`.trim()}>
         {value}
         {note ? <span className="metric-note">{note}</span> : null}
       </p>

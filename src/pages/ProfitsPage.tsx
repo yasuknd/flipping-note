@@ -76,8 +76,15 @@ export function ProfitsPage() {
         item.feeRatePercent,
         item.saleShipping,
         cost,
+        item.feeDiscountPercent,
+        item.couponAmount,
       )
-      const payout = calcPayout(item.salePrice!, item.feeRatePercent, item.saleShipping)
+      const payout = calcPayout(
+        item.salePrice!,
+        item.feeRatePercent,
+        item.saleShipping,
+        item.feeDiscountPercent,
+      )
       const prev = map.get(key) ?? {
         settled: 0,
         pending: 0,
@@ -108,10 +115,6 @@ export function ProfitsPage() {
     () => byMonth.reduce((sum, row) => sum + row.settled, 0),
     [byMonth],
   )
-  const totalPending = useMemo(
-    () => byMonth.reduce((sum, row) => sum + row.pending, 0),
-    [byMonth],
-  )
   const totalSettledPayout = useMemo(
     () => byMonth.reduce((sum, row) => sum + row.settledPayout, 0),
     [byMonth],
@@ -121,7 +124,11 @@ export function ProfitsPage() {
     [byMonth],
   )
   const totalPayout = totalSettledPayout + totalPendingPayout
-  const totalProfit = totalSettled + totalPending
+  /** 見込利益 = 取引完了＋取引中 */
+  const expectedProfit = useMemo(
+    () => byMonth.reduce((sum, row) => sum + row.settled + row.pending, 0),
+    [byMonth],
+  )
 
   const defaultMonth = byMonth[0]?.month ?? ''
   const [selectedMonth, setSelectedMonth] = useState(defaultMonth)
@@ -133,22 +140,20 @@ export function ProfitsPage() {
       'flipping-note-profits.csv',
       [
         '月',
-        '売上金',
-        '売上金（見込）',
+        '総売上金（取引完了）',
+        '総売上金（完了＋取引中）',
         '確定利益',
-        '見込利益',
-        '合計利益',
+        '見込利益（完了＋取引中）',
         '確定件数',
         '取引中件数',
-        '総仕入れ価格（実質）',
+        '総仕入れ額（実質）',
       ],
       [
         ...byMonth.map((row) => [
           formatMonthLabel(row.month),
+          row.settledPayout,
           row.settledPayout + row.pendingPayout,
-          row.pendingPayout,
           row.settled,
-          row.pending,
           row.settled + row.pending,
           row.settledCount,
           row.pendingCount,
@@ -156,11 +161,10 @@ export function ProfitsPage() {
         ]),
         [
           '合計',
+          totalSettledPayout,
           totalPayout,
-          totalPendingPayout,
           totalSettled,
-          totalPending,
-          totalProfit,
+          expectedProfit,
           settledItems.length,
           pendingItems.length,
           totalPurchaseCost,
@@ -175,7 +179,7 @@ export function ProfitsPage() {
         <div>
           <h1>利益</h1>
           <p className="muted">
-            売上金（見込）は取引中分。カッコ内は確定＋見込の合計（販売価格−手数料−送料）
+            総売上金の太字は取引完了分、カッコ内は取引完了＋取引中。見込利益は両方の合計です。
           </p>
         </div>
         <button
@@ -189,19 +193,19 @@ export function ProfitsPage() {
 
       <div className="hero-metrics hero-metrics-2">
         <Metric
-          label="総仕入れ価格（実質）"
+          label="総仕入れ額（実質）"
           value={formatYen(totalPurchaseCost)}
           emphasis="neutral"
         />
         <Metric
-          label="売上金（見込）"
-          value={formatYen(totalPendingPayout)}
+          label="総売上金（見込）"
+          value={formatYen(totalSettledPayout)}
           note={`（${formatYen(totalPayout)}）`}
           emphasis="neutral"
         />
       </div>
 
-      <div className="hero-metrics hero-metrics-3">
+      <div className="hero-metrics hero-metrics-2">
         <Metric
           label="確定利益"
           value={formatYen(totalSettled)}
@@ -209,13 +213,8 @@ export function ProfitsPage() {
         />
         <Metric
           label="見込利益"
-          value={formatYen(totalPending)}
-          emphasis={totalPending >= 0 ? 'neutral' : 'negative'}
-        />
-        <Metric
-          label="合計利益"
-          value={formatYen(totalProfit)}
-          emphasis={totalProfit >= 0 ? 'positive' : 'negative'}
+          value={formatYen(expectedProfit)}
+          emphasis={expectedProfit >= 0 ? 'positive' : 'negative'}
         />
       </div>
 
@@ -242,15 +241,15 @@ export function ProfitsPage() {
           {selected ? (
             <div className="month-card">
               <h2>{formatMonthLabel(selected.month)}</h2>
-              <div className="hero-metrics">
+              <div className="hero-metrics hero-metrics-2">
                 <Metric
-                  label="売上金（見込）"
-                  value={formatYen(selected.pendingPayout)}
+                  label="総売上金（見込）"
+                  value={formatYen(selected.settledPayout)}
                   note={`（${formatYen(selected.settledPayout + selected.pendingPayout)}）`}
                   emphasis="neutral"
                 />
                 <Metric
-                  label="合計利益"
+                  label="見込利益"
                   value={formatYen(selected.settled + selected.pending)}
                   emphasis={
                     selected.settled + selected.pending >= 0 ? 'positive' : 'negative'
@@ -264,13 +263,14 @@ export function ProfitsPage() {
                   emphasis={selected.settled >= 0 ? 'positive' : 'negative'}
                 />
                 <Metric
-                  label="見込利益"
+                  label="取引中利益"
                   value={formatYen(selected.pending)}
                   emphasis={selected.pending >= 0 ? 'neutral' : 'negative'}
                 />
                 <Metric
                   label="件数"
-                  value={`完了${selected.settledCount} / 取引中${selected.pendingCount}`}
+                  value={`完了${selected.settledCount}／取引中${selected.pendingCount}`}
+                  valueClassName="metric-value-compact"
                 />
               </div>
             </div>
@@ -291,11 +291,12 @@ export function ProfitsPage() {
                     <span>{formatMonthLabel(row.month)}</span>
                     <div className="month-row-values">
                       <span className="month-row-sub">
-                        売上金（見込） {formatYen(row.pendingPayout)}
+                        総売上金 {formatYen(row.settledPayout)}
                         （{formatYen(row.settledPayout + row.pendingPayout)}）
                       </span>
                       <span className="month-row-sub">
-                        確定 {formatYen(row.settled)} / 見込 {formatYen(row.pending)}
+                        確定 {formatYen(row.settled)} / 見込{' '}
+                        {formatYen(row.settled + row.pending)}
                       </span>
                       <span
                         className={

@@ -56,7 +56,9 @@ function toFormState(item: {
   memo: string
   marketplace: string
   feeRatePercent: number
+  feeDiscountPercent: number
   saleShipping: number
+  couponAmount: number
   salePrice: number | null
   soldDate: string
   status: ItemStatus
@@ -76,7 +78,9 @@ function toFormState(item: {
     memo: item.memo,
     marketplace: item.marketplace,
     feeRatePercent: item.feeRatePercent,
+    feeDiscountPercent: item.feeDiscountPercent,
     saleShipping: item.saleShipping,
+    couponAmount: item.couponAmount,
     salePrice: item.salePrice,
     soldDate: item.soldDate,
     status: item.status,
@@ -192,8 +196,21 @@ export function ItemFormPage() {
   )
 
   const breakEven = useMemo(
-    () => calcBreakEvenPrice(effectiveCost, form.saleShipping, form.feeRatePercent),
-    [effectiveCost, form.saleShipping, form.feeRatePercent],
+    () =>
+      calcBreakEvenPrice(
+        effectiveCost,
+        form.saleShipping,
+        form.feeRatePercent,
+        form.feeDiscountPercent,
+        form.couponAmount,
+      ),
+    [
+      effectiveCost,
+      form.saleShipping,
+      form.feeRatePercent,
+      form.feeDiscountPercent,
+      form.couponAmount,
+    ],
   )
 
   const recommended = useMemo(
@@ -203,15 +220,34 @@ export function ItemFormPage() {
         form.saleShipping,
         form.feeRatePercent,
         settings.minProfit,
+        form.feeDiscountPercent,
+        form.couponAmount,
       ),
-    [effectiveCost, form.saleShipping, form.feeRatePercent, settings.minProfit],
+    [
+      effectiveCost,
+      form.saleShipping,
+      form.feeRatePercent,
+      form.feeDiscountPercent,
+      form.couponAmount,
+      settings.minProfit,
+    ],
   )
 
   const salePrice = toOptionalNumber(salePriceText)
-  const fee = salePrice != null ? calcFee(salePrice, form.feeRatePercent) : null
+  const fee =
+    salePrice != null
+      ? calcFee(salePrice, form.feeRatePercent, form.feeDiscountPercent)
+      : null
   const profit =
     salePrice != null
-      ? calcProfit(salePrice, form.feeRatePercent, form.saleShipping, effectiveCost)
+      ? calcProfit(
+          salePrice,
+          form.feeRatePercent,
+          form.saleShipping,
+          effectiveCost,
+          form.feeDiscountPercent,
+          form.couponAmount,
+        )
       : null
   const profitRate =
     salePrice != null && profit != null ? calcProfitRate(profit, salePrice) : null
@@ -495,6 +531,30 @@ export function ItemFormPage() {
                 id="saleShipping"
                 value={numToRaw(form.saleShipping)}
                 onChange={(raw) => update('saleShipping', rawToNum(raw))}
+                placeholder="0"
+              />
+            </Field>
+          </div>
+          <div className="grid-2">
+            <Field label="手数料割引（%）" hint="販売手数料率に掛けて手数料を再計算">
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                max={100}
+                step={0.1}
+                value={form.feeDiscountPercent || ''}
+                onChange={(e) =>
+                  update('feeDiscountPercent', e.target.value === '' ? 0 : Number(e.target.value))
+                }
+                placeholder="0"
+              />
+            </Field>
+            <Field label="クーポン（円）" hint="利益に上乗せして再計算">
+              <MoneyInput
+                id="couponAmount"
+                value={numToRaw(form.couponAmount)}
+                onChange={(raw) => update('couponAmount', rawToNum(raw))}
                 placeholder="0"
               />
             </Field>

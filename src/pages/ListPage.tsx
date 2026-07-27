@@ -89,7 +89,9 @@ function toItemInput(
     marketplace: patch.marketplace !== undefined ? patch.marketplace : item.marketplace,
     feeRatePercent:
       patch.feeRatePercent !== undefined ? patch.feeRatePercent : item.feeRatePercent,
+    feeDiscountPercent: item.feeDiscountPercent,
     saleShipping: item.saleShipping,
+    couponAmount: item.couponAmount,
     salePrice: patch.salePrice !== undefined ? patch.salePrice : item.salePrice,
     soldDate: patch.soldDate !== undefined ? patch.soldDate : item.soldDate,
     status: patch.status ?? item.status,
@@ -407,11 +409,23 @@ export function ListPage() {
       )
       const profit =
         item.salePrice != null
-          ? calcProfit(item.salePrice, item.feeRatePercent, item.saleShipping, cost)
+          ? calcProfit(
+              item.salePrice,
+              item.feeRatePercent,
+              item.saleShipping,
+              cost,
+              item.feeDiscountPercent,
+              item.couponAmount,
+            )
           : null
       const payout =
         item.salePrice != null
-          ? calcPayout(item.salePrice, item.feeRatePercent, item.saleShipping)
+          ? calcPayout(
+              item.salePrice,
+              item.feeRatePercent,
+              item.saleShipping,
+              item.feeDiscountPercent,
+            )
           : null
 
       return [
@@ -427,6 +441,8 @@ export function ListPage() {
         item.soldDate,
         cost,
         item.salePrice,
+        item.feeDiscountPercent,
+        item.couponAmount,
         payout,
         profit,
         item.memo,
@@ -448,6 +464,8 @@ export function ListPage() {
         '売却日',
         '実質仕入価格',
         '販売価格',
+        '手数料割引%',
+        'クーポン',
         '売上金',
         '利益',
         'メモ',
@@ -533,11 +551,23 @@ export function ListPage() {
             )
             const profit =
               item.salePrice != null
-                ? calcProfit(item.salePrice, item.feeRatePercent, item.saleShipping, cost)
+                ? calcProfit(
+                    item.salePrice,
+                    item.feeRatePercent,
+                    item.saleShipping,
+                    cost,
+                    item.feeDiscountPercent,
+                    item.couponAmount,
+                  )
                 : null
             const payout =
               item.salePrice != null
-                ? calcPayout(item.salePrice, item.feeRatePercent, item.saleShipping)
+                ? calcPayout(
+                    item.salePrice,
+                    item.feeRatePercent,
+                    item.saleShipping,
+                    item.feeDiscountPercent,
+                  )
                 : null
             const metaLine = [item.brand, item.color, item.size, item.modelNumber]
               .filter(Boolean)
