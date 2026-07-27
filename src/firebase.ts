@@ -32,6 +32,10 @@ export function isFirebaseConfigured(): boolean {
   )
 }
 
+export function getFirebaseProjectId(): string {
+  return firebaseConfig.projectId ?? ''
+}
+
 let app: FirebaseApp | null = null
 let auth: Auth | null = null
 let db: Firestore | null = null
@@ -50,7 +54,6 @@ export function getFirebaseAuth(): Auth {
   if (!auth) {
     const firebaseApp = getApp()
     try {
-      // Safari / iOS では getAuth() だとリダイレクト復帰が失敗しやすい
       auth = initializeAuth(firebaseApp, {
         persistence: indexedDBLocalPersistence,
         popupRedirectResolver: browserPopupRedirectResolver,
@@ -71,10 +74,12 @@ export function getFirebaseAuth(): Auth {
 
 export function getFirebaseDb(): Firestore {
   if (!db) {
-    // persistentLocalCache は Safari/iOS で誤って offline 扱いになることがある。
-    // 端末キャッシュは localStorage 側で持つので、Firestore はメモリのみにする。
     try {
-      db = initializeFirestore(getApp(), { localCache: memoryLocalCache() })
+      // Safari / 一部ネットワークでは WebChannel が失敗しやすいため long polling を強制
+      db = initializeFirestore(getApp(), {
+        localCache: memoryLocalCache(),
+        experimentalForceLongPolling: true,
+      })
     } catch {
       db = getFirestore(getApp())
     }

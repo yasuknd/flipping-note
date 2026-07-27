@@ -20,6 +20,7 @@ export function SettingsPage() {
     syncError,
     authError,
     clearAuthError,
+    retrySync,
     signInWithGoogle,
     signOut,
   } = useAuth()
@@ -29,6 +30,21 @@ export function SettingsPage() {
   const [newFee, setNewFee] = useState('10')
   const [message, setMessage] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
+  const [syncBusy, setSyncBusy] = useState(false)
+
+  async function handleRetrySync() {
+    setSyncBusy(true)
+    setMessage('')
+    try {
+      await retrySync()
+      setMessage('再同期を開始しました')
+    } catch (err) {
+      const text = err instanceof Error ? err.message : '再同期に失敗しました'
+      setMessage(text)
+    } finally {
+      setSyncBusy(false)
+    }
+  }
 
   async function handleSignIn() {
     setAuthBusy(true)
@@ -127,6 +143,14 @@ export function SettingsPage() {
                 </p>
               </div>
             </div>
+            <button
+              type="button"
+              className="btn btn-primary btn-block"
+              disabled={authBusy || syncBusy || !syncReady}
+              onClick={() => void handleRetrySync()}
+            >
+              再同期
+            </button>
             <button
               type="button"
               className="btn btn-secondary btn-block"

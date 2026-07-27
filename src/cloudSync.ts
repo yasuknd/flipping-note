@@ -3,13 +3,12 @@ import {
   deleteDoc,
   doc,
   enableNetwork,
-  getDocFromServer,
   onSnapshot,
   setDoc,
   writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore'
-import { getFirebaseDb } from './firebase'
+import { getFirebaseAuth, getFirebaseDb, getFirebaseProjectId } from './firebase'
 import { loadItems, loadSettings, saveItems, saveSettings } from './storage'
 import { normalizeItem, type AppSettings, type Item } from './types'
 
@@ -33,31 +32,155 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function readSyncMeta(uid: string) {
-  const db = getFirebaseDb()
-  await enableNetwork(db)
-  const metaRef = syncMetaDoc(uid)
-
-  let lastError: unknown
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    try {
-      return await getDocFromServer(metaRef)
-    } catch (err) {
-      lastError = err
-      await enableNetwork(db)
-      await sleep(300 * (attempt + 1))
-    }
-  }
-  throw lastError instanceof Error
-    ? lastError
-    : new Error('クラウドへの接続に失敗しました')
+async function ensureAuthToken(): Promise<string> {
+  const user = getFirebaseAuth().currentUser
+  if (!user) throw new Error('ログイン状態を確認できませんでした')
+  return user.getIdToken(true)
 }
 
-/** クラウド未初期化なら端末の localStorage をアップロードする */
-export async function ensureCloudInitialized(uid: string): Promise<void> {
-  const meta = await readSyncMeta(uid)
-  if (meta.exists()) return
+function formatSyncError(err: unknown): Error {
+  const projectId = getFirebaseProjectId()
+  const raw = err instanceof Error ? err.message : String(err)
+  const code =
+    err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : ''
 
+  if (code === 'permission-denied' || /permission|insufficient/i.test(raw)) {
+    return new Error(
+      'Firestore の権限エラーです。コンソールのルールを公開済みか確認してください。',
+    )
+  }
+  if (code === 'not-found' || /does not exist|not contain an active/i.test(raw)) {
+    return new Error(
+      `Firestore データベースが見つかりません（project: ${projectId}）。コンソールで Firestore を作成してください。`,
+    )
+  }
+  if (/offline/i.test(raw)) {
+    return new Error(
+      'クラウドに接続できませんでした。Wi-Fi を確認し、設定の「再同期」を押すかページを再読み込みしてください。',
+    )
+  }
+  return err instanceof Error ? err : new Error(raw)
+}
+
+/** Firestore REST: SDK の WebChannel が offline になる場合のフォールバック */
+async function restGetMetaExists(uid: string, token: string): Promise<boolean> {
+  const projectId = getFirebaseProjectId()
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${projectId}` +
+    `/databases/(default)/documents/users/${uid}/meta/sync`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 404) return false
+  if (!res.ok) {
+    const body = await res.text()
+    if (/PERMISSION_DENIED|permission/i.test(body)) {
+      throw new Error(
+        'Firestore の権限エラーです。コンソールのルールを公開済みか確認してください。',
+      )
+    }
+    throw new Error(`クラウド接続エラー (${res.status})`)
+  }
+  return true
+}
+
+function toFirestoreValue(value: unknown): Record<string, unknown> {
+  if (value === null) return { nullValue: null }
+  if (typeof value === 'string') return { stringValue: value }
+  if (typeof value === 'boolean') return { booleanValue: value }
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value }
+  }
+  if (Array.isArray(value)) {
+    return { arrayValue: { values: value.map((v) => toFirestoreValue(v)) } }
+  }
+  if (typeof value === 'object') {
+    const fields: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      fields[k] = toFirestoreValue(v)
+    }
+    return { mapValue: { fields } }
+  }
+  return { stringValue: String(value) }
+}
+
+async function restUpsertDocument(
+  docPath: string,
+  data: Record<string, unknown>,
+  token: string,
+): Promise<void> {
+  const projectId = getFirebaseProjectId()
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${projectId}` +
+    `/databases/(default)/documents/${docPath}`
+  const fields: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(data)) {
+    fields[k] = toFirestoreValue(v)
+  }
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fields }),
+  })
+  if (!res.ok) {
+    const body = await res.text()
+    if (/PERMISSION_DENIED|permission/i.test(body)) {
+      throw new Error(
+        'Firestore の権限エラーです。コンソールのルールを公開済みか確認してください。',
+      )
+    }
+    throw new Error(`クラウド書き込みエラー (${res.status})`)
+  }
+}
+
+async function uploadLocalDataRest(uid: string, token: string): Promise<void> {
+  const localItems = loadItems()
+  const localSettings = loadSettings()
+
+  for (const item of localItems) {
+    await restUpsertDocument(`users/${uid}/items/${item.id}`, { ...item }, token)
+  }
+  await restUpsertDocument(`users/${uid}/settings/app`, { ...localSettings }, token)
+  await restUpsertDocument(`users/${uid}/meta/sync`, {
+    initializedAt: new Date().toISOString(),
+    itemCount: localItems.length,
+  }, token)
+}
+
+/** onSnapshot でサーバー応答を待ち、meta の有無を返す */
+function waitForMetaExists(uid: string, timeoutMs = 12000): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      unsub()
+      fn()
+    }
+
+    const timer = setTimeout(() => {
+      finish(() => reject(new Error('offline')))
+    }, timeoutMs)
+
+    const unsub = onSnapshot(
+      syncMetaDoc(uid),
+      { includeMetadataChanges: true },
+      (snap) => {
+        if (snap.metadata.fromCache) return
+        finish(() => resolve(snap.exists()))
+      },
+      (err) => {
+        finish(() => reject(err))
+      },
+    )
+  })
+}
+
+async function uploadLocalDataSdk(uid: string): Promise<void> {
   const localItems = loadItems()
   const localSettings = loadSettings()
   const db = getFirebaseDb()
@@ -75,16 +198,75 @@ export async function ensureCloudInitialized(uid: string): Promise<void> {
   await batch.commit()
 }
 
+/** クラウド未初期化なら端末の localStorage をアップロードする */
+export async function ensureCloudInitialized(uid: string): Promise<void> {
+  try {
+    const token = await ensureAuthToken()
+    const db = getFirebaseDb()
+    await enableNetwork(db)
+    await sleep(200)
+
+    let exists: boolean | null = null
+    try {
+      exists = await waitForMetaExists(uid)
+    } catch {
+      // SDK 経路が offline なら REST に切り替え
+      exists = await restGetMetaExists(uid, token)
+      if (!exists) {
+        await uploadLocalDataRest(uid, token)
+        return
+      }
+      return
+    }
+
+    if (exists) return
+
+    try {
+      await uploadLocalDataSdk(uid)
+    } catch {
+      const freshToken = await ensureAuthToken()
+      await uploadLocalDataRest(uid, freshToken)
+    }
+  } catch (err) {
+    throw formatSyncError(err)
+  }
+}
+
 export async function upsertItemCloud(uid: string, item: Item): Promise<void> {
-  await setDoc(itemDoc(uid, item.id), item)
+  try {
+    await setDoc(itemDoc(uid, item.id), item)
+  } catch {
+    const token = await ensureAuthToken()
+    await restUpsertDocument(`users/${uid}/items/${item.id}`, { ...item }, token)
+  }
 }
 
 export async function deleteItemCloud(uid: string, id: string): Promise<void> {
-  await deleteDoc(itemDoc(uid, id))
+  try {
+    await deleteDoc(itemDoc(uid, id))
+  } catch {
+    const token = await ensureAuthToken()
+    const projectId = getFirebaseProjectId()
+    const url =
+      `https://firestore.googleapis.com/v1/projects/${projectId}` +
+      `/databases/(default)/documents/users/${uid}/items/${id}`
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`クラウド削除エラー (${res.status})`)
+    }
+  }
 }
 
 export async function saveSettingsCloud(uid: string, settings: AppSettings): Promise<void> {
-  await setDoc(settingsDoc(uid), settings)
+  try {
+    await setDoc(settingsDoc(uid), settings)
+  } catch {
+    const token = await ensureAuthToken()
+    await restUpsertDocument(`users/${uid}/settings/app`, { ...settings }, token)
+  }
 }
 
 export function subscribeItems(
@@ -95,13 +277,15 @@ export function subscribeItems(
   return onSnapshot(
     itemsCol(uid),
     (snap) => {
+      if (snap.metadata.fromCache && snap.empty) return
+
       const items = snap.docs
         .map((d) => normalizeItem({ ...(d.data() as Partial<Item>), id: d.id }))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       saveItems(items)
       onChange(items)
     },
-    (error) => onError?.(error),
+    (error) => onError?.(formatSyncError(error)),
   )
 }
 
@@ -133,6 +317,6 @@ export function subscribeSettings(
       saveSettings(settings)
       onChange(settings)
     },
-    (error) => onError?.(error),
+    (error) => onError?.(formatSyncError(error)),
   )
 }

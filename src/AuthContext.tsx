@@ -30,6 +30,7 @@ interface AuthContextValue {
   syncError: string | null
   authError: string | null
   clearAuthError: () => void
+  retrySync: () => Promise<void>
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -66,8 +67,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [syncReady, setSyncReady] = useState(!configured)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [syncNonce, setSyncNonce] = useState(0)
 
   const clearAuthError = useCallback(() => setAuthError(null), [])
+
+  const runCloudInit = useCallback(async (uid: string) => {
+    setSyncReady(false)
+    setSyncError(null)
+    await ensureCloudInitialized(uid)
+    setSyncReady(true)
+  }, [])
 
   useEffect(() => {
     if (!configured) return
@@ -128,9 +137,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSyncReady(false)
     setSyncError(null)
 
-    void ensureCloudInitialized(user.uid)
+    void runCloudInit(user.uid)
       .then(() => {
-        if (!cancelled) setSyncReady(true)
+        if (cancelled) return
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -142,7 +151,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [configured, ready, user])
+  }, [configured, ready, user, syncNonce, runCloudInit])
+
+  const retrySync = useCallback(async () => {
+    if (!user) return
+    setSyncNonce((n) => n + 1)
+  }, [user])
 
   const signInWithGoogle = useCallback(async () => {
     if (!configured) {
@@ -195,6 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       syncError,
       authError,
       clearAuthError,
+      retrySync,
       signInWithGoogle,
       signOut,
     }),
@@ -206,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       syncError,
       authError,
       clearAuthError,
+      retrySync,
       signInWithGoogle,
       signOut,
     ],
