@@ -1,0 +1,41 @@
+/** 一般的なカラー（半角英大文字） */
+export const COLOR_PRESETS: string[] = [
+  'WHITE',
+  'BLACK',
+  'GRAY',
+  'CHARCOAL',
+  'NAVY',
+  'BLUE',
+  'LIGHT BLUE',
+  'RED',
+  'PINK',
+  'GREEN',
+  'KHAKI',
+  'OLIVE',
+  'YELLOW',
+  'ORANGE',
+  'PURPLE',
+  'BROWN',
+  'BEIGE',
+  'IVORY',
+  'GOLD',
+  'SILVER',
+  'MULTI',
+]
+
+/** 一般的なサイズ（XS〜2XL / 1〜6 / FREE） */
+export const SIZE_PRESETS: string[] = [
+  'XS',
+  'S',
+  'M',
+  'L',
+  'XL',
+  '2XL',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  'FREE',
+]
